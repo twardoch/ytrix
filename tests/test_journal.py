@@ -247,12 +247,14 @@ class TestGetJournalSummary:
 
     def test_counts_by_status(self, temp_journal_dir: Path) -> None:
         """Returns correct counts by status."""
-        journal = create_journal([
-            ("PL1", "T1"),
-            ("PL2", "T2"),
-            ("PL3", "T3"),
-            ("PL4", "T4"),
-        ])
+        journal = create_journal(
+            [
+                ("PL1", "T1"),
+                ("PL2", "T2"),
+                ("PL3", "T3"),
+                ("PL4", "T4"),
+            ]
+        )
         update_task(journal, "PL1", status=TaskStatus.COMPLETED)
         update_task(journal, "PL2", status=TaskStatus.FAILED)
         update_task(journal, "PL3", status=TaskStatus.SKIPPED)

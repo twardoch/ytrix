@@ -141,7 +141,9 @@ class TestAnalyzeBatchDeduplication:
             Video(id=vid, title=f"Video {vid}", channel="Ch", position=i)
             for i, vid in enumerate(video_ids)
         ]
-        return Playlist(id=playlist_id, title=f"Playlist {playlist_id}", privacy="public", videos=videos)
+        return Playlist(
+            id=playlist_id, title=f"Playlist {playlist_id}", privacy="public", videos=videos
+        )
 
     def test_batch_analysis(self) -> None:
         """Analyzes multiple source playlists."""

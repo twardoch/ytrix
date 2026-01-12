@@ -28,9 +28,7 @@ class TestCacheInit:
 
         # Verify tables exist by querying them
         with cache.get_connection() as conn:
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             table_names = {row["name"] for row in tables}
 
         assert "playlists" in table_names
@@ -141,9 +139,7 @@ class TestPlaylistVideosCache:
         assert cached[1].id == "v2"
         assert cached[1].position == 1
 
-    def test_returns_none_for_missing_playlist_videos(
-        self, temp_cache_dir: Path
-    ) -> None:
+    def test_returns_none_for_missing_playlist_videos(self, temp_cache_dir: Path) -> None:
         """Returns None when playlist videos not in cache."""
         cache.init_db()
         cached = cache.get_cached_playlist_videos("PLnonexistent")

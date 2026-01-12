@@ -170,6 +170,68 @@ class YtrixCLI:
         console.print(f"[green]{msg}[/green]")
         return None
 
+    def journal_status(self, clear: bool = False) -> dict[str, Any] | None:
+        """Show batch operation journal status.
+
+        Displays the current batch operation journal, including task counts by status
+        and details of incomplete tasks. Use --clear to delete the journal.
+
+        Args:
+            clear: Delete the journal file
+
+        Example:
+            ytrix journal_status         # Show journal status
+            ytrix journal_status --clear # Clear the journal
+            ytrix --json-output journal_status
+        """
+        if clear:
+            clear_journal()
+            msg = "Journal cleared"
+            if self._json:
+                return self._output({"cleared": True})
+            console.print(f"[green]{msg}[/green]")
+            return None
+
+        journal = load_journal()
+        if journal is None:
+            if self._json:
+                return self._output({"exists": False})
+            console.print("[yellow]No journal found[/yellow]")
+            return None
+
+        summary = get_journal_summary(journal)
+
+        if self._json:
+            tasks_data = [t.to_dict() for t in journal.tasks]
+            return self._output({
+                "batch_id": journal.batch_id,
+                "created_at": journal.created_at,
+                "summary": summary,
+                "tasks": tasks_data,
+            })
+
+        console.print(f"[bold]Batch:[/bold] {journal.batch_id}")
+        console.print(f"[bold]Created:[/bold] {journal.created_at}")
+        console.print()
+        console.print(f"[bold]Summary:[/bold]")
+        console.print(f"  Total: {summary['total']}")
+        console.print(f"  [green]Completed: {summary['completed']}[/green]")
+        console.print(f"  [blue]Skipped: {summary['skipped']}[/blue]")
+        console.print(f"  [yellow]Pending: {summary['pending']}[/yellow]")
+        console.print(f"  [red]Failed: {summary['failed']}[/red]")
+
+        # Show failed tasks with errors
+        failed = [t for t in journal.tasks if t.status == TaskStatus.FAILED]
+        if failed:
+            console.print()
+            console.print("[bold red]Failed tasks:[/bold red]")
+            for t in failed:
+                console.print(f"  {t.source_title}")
+                console.print(f"    [dim]Error: {t.error}[/dim]")
+                console.print(f"    [dim]Retries: {t.retry_count}[/dim]")
+
+        return None
+
     def ls(
         self, count: bool = False, user: str | None = None, urls: bool = False
     ) -> dict[str, Any] | None:

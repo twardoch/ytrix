@@ -102,17 +102,13 @@ class TestEstimateBatchCopy:
 
     def test_with_skip(self) -> None:
         """Reduces creates when skipping existing."""
-        estimate = estimate_batch_copy(
-            num_playlists=5, total_videos=50, skip_existing=2
-        )
+        estimate = estimate_batch_copy(num_playlists=5, total_videos=50, skip_existing=2)
         assert estimate.playlist_creates == 3
         assert estimate.video_adds == 50
 
     def test_with_updates(self) -> None:
         """Counts updates instead of creates."""
-        estimate = estimate_batch_copy(
-            num_playlists=5, total_videos=50, update_existing=2
-        )
+        estimate = estimate_batch_copy(num_playlists=5, total_videos=50, update_existing=2)
         assert estimate.playlist_creates == 3
         assert estimate.playlist_updates == 2
 

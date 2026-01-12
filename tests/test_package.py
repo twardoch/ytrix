@@ -5,7 +5,8 @@ def test_version_exported() -> None:
     """Package exports __version__."""
     from ytrix import __version__
 
-    assert __version__ == "0.1.13"
+    assert __version__
+    assert isinstance(__version__, str)
 
 
 def test_models_exported() -> None:

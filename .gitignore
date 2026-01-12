@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+# Generated version file (hatch-vcs)
+ytrix/_version.py
+
 # Virtual environments
 .venv
 

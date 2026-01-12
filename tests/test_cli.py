@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ytrix import __version__
 from ytrix.__main__ import YtrixCLI
 from ytrix.models import Playlist, Video
 
@@ -99,7 +100,7 @@ class TestVersion:
         """Version command prints version string."""
         cli.version()
         captured = capsys.readouterr()
-        assert "0.1.13" in captured.out
+        assert __version__ in captured.out
 
     def test_version_json_output(self, cli_json: YtrixCLI, capsys) -> None:
         """Version with JSON output returns dict."""
@@ -108,7 +109,7 @@ class TestVersion:
         cli_json.version()
         captured = capsys.readouterr()
         parsed = json_mod.loads(captured.out)
-        assert parsed["version"] == "0.1.13"
+        assert parsed["version"] == __version__
 
 
 class TestConfig:
