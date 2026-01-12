@@ -1,0 +1,105 @@
+YTRIX SETUP GUIDE
+=================
+
+ytrix needs YouTube API credentials to manage your playlists.
+
+STEP 1: CREATE A GOOGLE CLOUD PROJECT
+--------------------------------------
+1. Go to: https://console.cloud.google.com/
+2. Click the project dropdown (top left, next to "Google Cloud")
+3. Click "New Project"
+4. Name it (e.g., "ytrix") and click Create
+5. Wait for creation, then select it from the dropdown
+
+STEP 2: ENABLE YOUTUBE DATA API
+-------------------------------
+1. In the left sidebar, click "APIs & Services" > "Library"
+2. Search for "YouTube Data API v3"
+3. Click it, then click "Enable"
+
+STEP 3: CONFIGURE OAUTH CONSENT SCREEN
+--------------------------------------
+1. Go to "APIs & Services" > "OAuth consent screen"
+2. Select "External" and click Create
+3. Fill in:
+   - App name: ytrix (or anything)
+   - User support email: your email
+   - Developer contact email: your email
+4. Click "Save and Continue"
+5. On Scopes page, click "Add or Remove Scopes"
+6. Find and check: "YouTube Data API v3" with ".../auth/youtube" scope
+   (This grants full YouTube access for playlist management)
+7. Click "Update", then "Save and Continue"
+8. On Test Users page, click "Add Users"
+9. Enter your Google email address (the account that owns your playlists)
+10. Click "Add", then "Save and Continue"
+
+STEP 4: CREATE OAUTH CREDENTIALS
+--------------------------------
+1. Go to "APIs & Services" > "Credentials"
+2. Click "+ Create Credentials" > "OAuth client ID"
+3. Application type: "Desktop app"
+4. Name: ytrix (or anything)
+5. Click "Create"
+6. You'll see Client ID and Client Secret - copy both
+
+STEP 5: FIND YOUR CHANNEL ID
+----------------------------
+1. Go to YouTube and sign in
+2. Click your profile picture > "Your channel"
+3. Look at the URL: youtube.com/channel/UCxxxxxxxxxx
+   Your channel ID is the "UCxxxxxxxxxx" part
+
+   Alternative: Go to youtube.com/account_advanced
+   Your channel ID is shown there
+
+STEP 6: CREATE CONFIG FILE
+--------------------------
+Create file: ~/.ytrix/config.toml
+
+Contents:
+    channel_id = 'UCxxxxxxxxxx'
+
+    [oauth]
+    client_id = 'your-client-id.apps.googleusercontent.com'
+    client_secret = 'GOCSPX-xxxxxxxxxx'
+
+Replace the values with your actual credentials.
+
+STEP 7: FIRST RUN (AUTHORIZE)
+-----------------------------
+Run any ytrix command (e.g., "ytrix ls")
+
+1. A browser window opens to Google sign-in
+2. Sign in with the account that owns your YouTube channel
+3. Click "Continue" (you may see "Google hasn't verified this app")
+4. Click "Continue" again to grant access
+5. Authorization completes; ytrix saves a token for future use
+
+Done! ytrix is now configured.
+
+TROUBLESHOOTING
+---------------
+"Access blocked: This app's request is invalid"
+  - Make sure Application type is "Desktop app" (not Web)
+  - Ensure you added your email as a test user
+
+"The caller does not have permission"
+  - You're trying to modify playlists on a different channel
+  - Check that channel_id matches your account's channel
+
+Token expired?
+  - Delete ~/.ytrix/token.json and re-authorize
+
+API quota exceeded?
+  - YouTube API has daily limits; wait 24 hours
+  - Or create a new project
+
+VERIFICATION NOTE
+-----------------
+While your app is in "Testing" mode, only emails added as test users
+can authorize. For personal use this is fine.
+
+To use with other accounts, you'd need to publish and verify your app
+with Google (requires privacy policy and review). For personal CLI
+tools, just keep it in Testing mode.

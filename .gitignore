@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test coverage
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Vendored dependencies (install via pip)
+external/
+
+# Development files (not for distribution)
+CLAUDE.md
+GOAL.md
+SPEC.md
+WORK.md
+AGENTS.md
+GEMINI.md
+LLXPRT.md
+QWEN.md
+.cursorrules
+llms.txt

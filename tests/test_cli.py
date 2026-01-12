@@ -1,0 +1,917 @@
+"""Smoke tests for ytrix CLI commands."""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from ytrix.__main__ import YtrixCLI
+from ytrix.models import Playlist, Video
+
+
+class TestCLICommands:
+    """Smoke tests for CLI command existence."""
+
+    def test_all_commands_exist(self) -> None:
+        """All expected commands exist on CLI class."""
+        expected = [
+            "version",
+            "config",
+            "ls",
+            "plist2mlist",
+            "plists2mlist",
+            "plist2mlists",
+            "mlists2yaml",
+            "yaml2mlists",
+            "mlist2yaml",
+            "yaml2mlist",
+        ]
+        for cmd in expected:
+            assert hasattr(YtrixCLI, cmd), f"Missing command: {cmd}"
+            assert callable(getattr(YtrixCLI, cmd)), f"Not callable: {cmd}"
+
+    def test_all_commands_have_docstrings(self) -> None:
+        """All commands have docstrings for help text."""
+        commands = [
+            "version",
+            "config",
+            "ls",
+            "plist2mlist",
+            "plists2mlist",
+            "plist2mlists",
+            "mlists2yaml",
+            "yaml2mlists",
+            "mlist2yaml",
+            "yaml2mlist",
+        ]
+        for cmd in commands:
+            method = getattr(YtrixCLI, cmd)
+            assert method.__doc__, f"Missing docstring: {cmd}"
+            assert len(method.__doc__) > 10, f"Docstring too short: {cmd}"
+
+    def test_cli_class_has_docstring(self) -> None:
+        """CLI class has docstring for Fire main help."""
+        assert YtrixCLI.__doc__, "CLI class missing docstring"
+        assert "YouTube" in YtrixCLI.__doc__, "Docstring should mention YouTube"
+        assert "playlist" in YtrixCLI.__doc__.lower(), "Docstring should mention playlist"
+
+    def test_main_function_exists(self) -> None:
+        """Entry point main function exists and is callable."""
+        from ytrix.__main__ import main
+
+        assert callable(main), "main() should be callable"
+
+
+@pytest.fixture
+def mock_config():
+    """Mock config loading."""
+    config = MagicMock()
+    config.channel_id = "UCtest123"
+    config.oauth.client_id = "test-id"
+    config.oauth.client_secret = "test-secret"
+    return config
+
+
+@pytest.fixture
+def mock_client():
+    """Mock YouTube API client."""
+    return MagicMock()
+
+
+@pytest.fixture
+def cli():
+    """Create CLI instance without verbose."""
+    with patch("ytrix.__main__.configure_logging"):
+        return YtrixCLI(verbose=False)
+
+
+@pytest.fixture
+def cli_json():
+    """Create CLI instance with JSON output."""
+    with patch("ytrix.__main__.configure_logging"):
+        return YtrixCLI(verbose=False, json_output=True)
+
+
+class TestVersion:
+    """Tests for version command."""
+
+    def test_version_prints_version(self, cli: YtrixCLI, capsys) -> None:
+        """Version command prints version string."""
+        cli.version()
+        captured = capsys.readouterr()
+        assert "0.1.13" in captured.out
+
+    def test_version_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """Version with JSON output returns dict."""
+        import json as json_mod
+
+        cli_json.version()
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["version"] == "0.1.13"
+
+
+class TestConfig:
+    """Tests for config command."""
+
+    def test_config_shows_paths(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config command shows config and token paths."""
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+        captured = capsys.readouterr()
+        assert "Config path:" in captured.out
+        assert "Token path:" in captured.out
+
+    def test_config_shows_not_found_when_missing(
+        self, cli: YtrixCLI, capsys, tmp_path: Path
+    ) -> None:
+        """Config command shows not found when config missing."""
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+        captured = capsys.readouterr()
+        assert "Config file not found" in captured.out
+        assert "Setup guide:" in captured.out
+
+    def test_config_shows_content_when_exists(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config command shows content when config exists."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("channel_id = 'UCtest'\n[oauth]\nclient_id = 'id'\n")
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+        captured = capsys.readouterr()
+        assert "Config file exists" in captured.out
+        assert "channel_id" in captured.out
+
+    def test_config_masks_secrets(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config command masks client_secret."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            "channel_id = 'UCtest'\n[oauth]\nclient_id = 'id'\nclient_secret = 'mysecret'\n"
+        )
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+        captured = capsys.readouterr()
+        assert "mysecret" not in captured.out
+        assert "<hidden>" in captured.out
+
+    def test_config_json_output(self, cli_json: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config with JSON output returns dict."""
+        import json as json_mod
+
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli_json.config()
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert "config_path" in parsed
+        assert "config_exists" in parsed
+        assert parsed["config_exists"] is False
+
+
+class TestList:
+    """Tests for list command."""
+
+    def test_list_playlists(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List command shows playlists."""
+        playlists = [
+            Playlist(id="PL1", title="Playlist 1"),
+            Playlist(id="PL2", title="Playlist 2", privacy="unlisted"),
+        ]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+        ):
+            cli.ls()
+
+        captured = capsys.readouterr()
+        assert "Playlist 1" in captured.out
+        assert "Playlist 2" in captured.out
+        assert "[unlisted]" in captured.out
+
+    def test_list_json_output(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List with JSON output returns dict."""
+        import json as json_mod
+
+        playlists = [
+            Playlist(id="PL1", title="Playlist 1"),
+        ]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+        ):
+            cli_json.ls()
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["count"] == 1
+        assert parsed["playlists"][0]["id"] == "PL1"
+
+    def test_list_empty_shows_message(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List command shows message when no playlists."""
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=[]),
+        ):
+            cli.ls()
+
+        captured = capsys.readouterr()
+        assert "No playlists found" in captured.out
+
+    def test_list_empty_json_output(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List with JSON output returns empty list when no playlists."""
+        import json as json_mod
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=[]),
+        ):
+            cli_json.ls()
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["count"] == 0
+        assert parsed["playlists"] == []
+
+    def test_list_with_count(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List with --count shows video counts."""
+        playlists = [Playlist(id="PL1", title="Playlist 1")]
+        videos = [Video(id="v1", title="V1", channel="Ch", position=0)]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+            patch("ytrix.__main__.api.get_playlist_videos", return_value=videos),
+        ):
+            cli.ls(count=True)
+
+        captured = capsys.readouterr()
+        assert "1 videos" in captured.out
+
+    def test_list_with_count_json(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List with --count and JSON includes video_count."""
+        import json as json_mod
+
+        playlists = [Playlist(id="PL1", title="Playlist 1")]
+        videos = [
+            Video(id="v1", title="V1", channel="Ch", position=0),
+            Video(id="v2", title="V2", channel="Ch", position=1),
+        ]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+            patch("ytrix.__main__.api.get_playlist_videos", return_value=videos),
+        ):
+            cli_json.ls(count=True)
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["playlists"][0]["video_count"] == 2
+
+    def test_list_user_playlists(self, cli: YtrixCLI, capsys) -> None:
+        """List playlists from another user via yt-dlp."""
+        playlists = [
+            Playlist(id="PLuser1", title="User Playlist 1"),
+            Playlist(id="PLuser2", title="User Playlist 2"),
+        ]
+
+        with patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=playlists):
+            cli.ls(user="@testchannel")
+
+        captured = capsys.readouterr()
+        assert "User Playlist 1" in captured.out
+        assert "User Playlist 2" in captured.out
+        assert "PLuser1" in captured.out
+
+    def test_list_user_empty(self, cli: YtrixCLI, capsys) -> None:
+        """List --user shows message when no playlists found."""
+        with patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=[]):
+            cli.ls(user="@emptychannel")
+
+        captured = capsys.readouterr()
+        assert "No playlists found" in captured.out
+
+    def test_list_user_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """List --user with JSON output returns dict."""
+        import json as json_mod
+
+        playlists = [Playlist(id="PLuser1", title="User Playlist 1")]
+
+        with patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=playlists):
+            cli_json.ls(user="@testchannel")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["count"] == 1
+        assert parsed["playlists"][0]["id"] == "PLuser1"
+
+    def test_list_urls_output(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """List --urls outputs only URLs, one per line."""
+        playlists = [
+            Playlist(id="PL1", title="Playlist 1"),
+            Playlist(id="PL2", title="Playlist 2"),
+        ]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+        ):
+            result = cli.ls(urls=True)
+
+        assert result is None  # No JSON return for urls mode
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 2
+        assert "https://youtube.com/playlist?list=PL1" in lines[0]
+        assert "https://youtube.com/playlist?list=PL2" in lines[1]
+        # Should not have Rich formatting
+        assert "[" not in captured.out or "list=" in captured.out
+
+    def test_list_user_urls_output(self, cli: YtrixCLI, capsys) -> None:
+        """List --user --urls outputs only URLs from another user's channel."""
+        playlists = [
+            Playlist(id="PLuser1", title="User Playlist 1"),
+            Playlist(id="PLuser2", title="User Playlist 2"),
+        ]
+
+        with patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=playlists):
+            result = cli.ls(user="@testchannel", urls=True)
+
+        assert result is None
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 2
+        assert "https://youtube.com/playlist?list=PLuser1" in lines[0]
+        assert "https://youtube.com/playlist?list=PLuser2" in lines[1]
+
+
+class TestPlist2mlist:
+    """Tests for plist2mlist command."""
+
+    def test_copies_playlist(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock
+    ) -> None:
+        """Copies playlist to user's channel."""
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Source Playlist",
+            description="Description",
+            videos=[
+                Video(id="vid1", title="Video 1", channel="Ch", position=0),
+                Video(id="vid2", title="Video 2", channel="Ch", position=1),
+            ],
+        )
+        mock_client.playlists().insert().execute.return_value = {"id": "PLnew123"}
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist),
+            patch("ytrix.__main__.api.create_playlist", return_value="PLnew123"),
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            result = cli.plist2mlist("PLsource")
+
+        assert "PLnew123" in result
+
+    def test_dry_run_does_not_create(self, cli: YtrixCLI) -> None:
+        """Dry run extracts but doesn't create playlist."""
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Source Playlist",
+            description="Description",
+            videos=[
+                Video(id="vid1", title="Video 1", channel="Ch", position=0),
+            ],
+        )
+
+        with (
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist),
+            patch("ytrix.__main__.api.create_playlist") as mock_create,
+        ):
+            result = cli.plist2mlist("PLsource", dry_run=True)
+
+        mock_create.assert_not_called()
+        assert result is None
+
+
+class TestPlists2mlist:
+    """Tests for plists2mlist command."""
+
+    def test_merges_playlists_from_file(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Merges multiple playlists from file."""
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLlist1\nPLlist2\n")
+
+        playlist1 = Playlist(
+            id="PLlist1",
+            title="List 1",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        playlist2 = Playlist(
+            id="PLlist2",
+            title="List 2",
+            videos=[Video(id="v2", title="V2", channel="Ch", position=0)],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", side_effect=[playlist1, playlist2]),
+            patch("ytrix.__main__.api.create_playlist", return_value="PLmerged"),
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            result = cli.plists2mlist(str(input_file))
+
+        assert result is not None
+        assert "PLmerged" in result
+
+    def test_deduplicates_videos(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Skips duplicate videos when merging."""
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLlist1\nPLlist2\n")
+
+        # Both playlists have video "v1"
+        playlist1 = Playlist(
+            id="PLlist1",
+            title="List 1",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        playlist2 = Playlist(
+            id="PLlist2",
+            title="List 2",
+            videos=[
+                Video(id="v1", title="V1", channel="Ch", position=0),  # duplicate
+                Video(id="v2", title="V2", channel="Ch", position=1),
+            ],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", side_effect=[playlist1, playlist2]),
+            patch("ytrix.__main__.api.create_playlist", return_value="PLmerged"),
+            patch("ytrix.__main__.api.add_video_to_playlist") as mock_add,
+        ):
+            result = cli_json.plists2mlist(str(input_file))
+
+        # Should only add 2 unique videos, not 3
+        assert mock_add.call_count == 2
+        assert result is not None
+        assert result["duplicates_skipped"] == 1
+
+
+class TestPlist2mlists:
+    """Tests for plist2mlists command."""
+
+    def test_splits_by_channel(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock
+    ) -> None:
+        """Splits playlist by channel."""
+        source = Playlist(
+            id="PLsource",
+            title="Mixed",
+            videos=[
+                Video(id="v1", title="V1", channel="Channel A", position=0),
+                Video(id="v2", title="V2", channel="Channel B", position=1),
+            ],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source),
+            patch("ytrix.__main__.api.create_playlist", side_effect=["PL1", "PL2"]),
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            result = cli.plist2mlists("PLsource", by="channel")
+
+        assert result is not None and len(result) == 2
+
+    def test_splits_by_year(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock
+    ) -> None:
+        """Splits playlist by year."""
+        source = Playlist(
+            id="PLsource",
+            title="Mixed Years",
+            videos=[
+                Video(id="v1", title="V1", channel="Ch", position=0, upload_date="20230115"),
+                Video(id="v2", title="V2", channel="Ch", position=1, upload_date="20240320"),
+            ],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source),
+            patch("ytrix.__main__.api.create_playlist", side_effect=["PL2023", "PL2024"]),
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            result = cli.plist2mlists("PLsource", by="year")
+
+        assert result is not None and len(result) == 2
+
+    def test_json_output(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """JSON output returns structured data."""
+        import json as json_mod
+
+        source = Playlist(
+            id="PLsource",
+            title="Mixed",
+            videos=[
+                Video(id="v1", title="V1", channel="Channel A", position=0),
+                Video(id="v2", title="V2", channel="Channel B", position=1),
+            ],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source),
+            patch("ytrix.__main__.api.create_playlist", side_effect=["PL1", "PL2"]),
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            cli_json.plist2mlists("PLsource", by="channel")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["source_title"] == "Mixed"
+        assert parsed["split_by"] == "channel"
+        assert parsed["playlists_created"] == 2
+        assert len(parsed["playlists"]) == 2
+
+    def test_dry_run_shows_preview(self, cli: YtrixCLI, capsys) -> None:
+        """Dry run shows what would be created without making changes."""
+        source = Playlist(
+            id="PLsource",
+            title="Mixed",
+            videos=[
+                Video(id="v1", title="V1", channel="Channel A", position=0),
+                Video(id="v2", title="V2", channel="Channel B", position=1),
+            ],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source):
+            result = cli.plist2mlists("PLsource", by="channel", dry_run=True)
+
+        assert result is None  # No playlists created
+        captured = capsys.readouterr()
+        assert "Dry run" in captured.out
+        assert "Channel A" in captured.out
+        assert "Channel B" in captured.out
+
+    def test_dry_run_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """Dry run with JSON returns planned playlists."""
+        import json as json_mod
+
+        source = Playlist(
+            id="PLsource",
+            title="Mixed",
+            videos=[
+                Video(id="v1", title="V1", channel="Channel A", position=0),
+                Video(id="v2", title="V2", channel="Channel B", position=1),
+            ],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source):
+            cli_json.plist2mlists("PLsource", by="channel", dry_run=True)
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["dry_run"] is True
+        assert parsed["playlists_planned"] == 2
+        assert len(parsed["playlists"]) == 2
+
+
+class TestMlists2yaml:
+    """Tests for mlists2yaml command."""
+
+    def test_exports_playlists(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Exports all playlists to YAML."""
+        playlists = [
+            Playlist(id="PL1", title="Playlist 1"),
+            Playlist(id="PL2", title="Playlist 2"),
+        ]
+        output_path = tmp_path / "playlists.yaml"
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+        ):
+            result = cli.mlists2yaml(str(output_path), details=False)
+
+        assert result == str(output_path)
+        assert output_path.exists()
+        content = output_path.read_text()
+        assert "PL1" in content
+        assert "PL2" in content
+
+    def test_json_output_returns_dict(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """JSON output returns dict and prints JSON."""
+        import json as json_mod
+
+        playlists = [
+            Playlist(id="PL1", title="Playlist 1"),
+            Playlist(id="PL2", title="Playlist 2"),
+        ]
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.list_my_playlists", return_value=playlists),
+        ):
+            result = cli_json.mlists2yaml(details=False)
+
+        assert isinstance(result, dict)
+        assert result["count"] == 2
+        assert len(result["playlists"]) == 2
+
+        # Verify JSON was printed
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["count"] == 2
+
+
+class TestYaml2mlists:
+    """Tests for yaml2mlists command."""
+
+    def test_applies_changes_dry_run(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Dry run shows changes without applying."""
+        yaml_file = tmp_path / "playlists.yaml"
+        yaml_file.write_text(
+            """
+playlists:
+  - id: PL123
+    title: New Title
+    description: New Desc
+    privacy: public
+"""
+        )
+
+        current = Playlist(id="PL123", title="Old Title", description="Old Desc")
+        mock_client.playlists().list().execute.return_value = {
+            "items": [
+                {
+                    "id": "PL123",
+                    "snippet": {"title": "Old Title", "description": "Old Desc"},
+                    "status": {"privacyStatus": "public"},
+                }
+            ]
+        }
+        mock_client.playlistItems().list().execute.return_value = {"items": []}
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=current),
+            patch("ytrix.__main__.api.update_playlist") as mock_update,
+        ):
+            cli.yaml2mlists(str(yaml_file), dry_run=True)
+
+        mock_update.assert_not_called()
+
+    def test_json_output(
+        self,
+        cli_json: YtrixCLI,
+        mock_config: MagicMock,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        """JSON output returns structured diff data."""
+        import json as json_mod
+
+        yaml_file = tmp_path / "playlists.yaml"
+        yaml_file.write_text(
+            """
+playlists:
+  - id: PL123
+    title: New Title
+    description: Desc
+    privacy: public
+"""
+        )
+
+        current = Playlist(id="PL123", title="Old Title", description="Desc")
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=current),
+        ):
+            cli_json.yaml2mlists(str(yaml_file), dry_run=True)
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["dry_run"] is True
+        assert parsed["playlists_processed"] == 1
+        assert parsed["playlists"][0]["playlist_id"] == "PL123"
+        assert "title" in parsed["playlists"][0]["changes"]
+
+
+class TestMlist2yaml:
+    """Tests for mlist2yaml command."""
+
+    def test_exports_single_playlist(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Exports single playlist to YAML."""
+        playlist = Playlist(
+            id="PLsingle",
+            title="Single Playlist",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        output_path = tmp_path / "single.yaml"
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=playlist),
+        ):
+            result = cli.mlist2yaml("PLsingle", output=str(output_path))
+
+        assert result == str(output_path)
+        assert output_path.exists()
+        assert "PLsingle" in output_path.read_text()
+
+    def test_json_output(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """JSON output returns playlist data."""
+        import json as json_mod
+
+        playlist = Playlist(
+            id="PLsingle",
+            title="Single Playlist",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=playlist),
+        ):
+            cli_json.mlist2yaml("PLsingle")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["playlist"]["id"] == "PLsingle"
+        assert parsed["playlist"]["title"] == "Single Playlist"
+        assert len(parsed["playlist"]["videos"]) == 1
+
+
+class TestYaml2mlist:
+    """Tests for yaml2mlist command."""
+
+    def test_delegates_to_yaml2mlists(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Delegates to yaml2mlists for single playlist."""
+        yaml_file = tmp_path / "playlist.yaml"
+        yaml_file.write_text(
+            """
+playlists:
+  - id: PL123
+    title: Test
+    description: Desc
+    privacy: public
+"""
+        )
+
+        current = Playlist(id="PL123", title="Test", description="Desc")
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=current),
+        ):
+            # Should not raise
+            cli.yaml2mlist(str(yaml_file), dry_run=True)
+
+    def test_json_output_returns_result(
+        self,
+        cli_json: YtrixCLI,
+        mock_config: MagicMock,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        """JSON output returns structured data."""
+        import json as json_mod
+
+        yaml_file = tmp_path / "playlist.yaml"
+        yaml_file.write_text(
+            """
+playlists:
+  - id: PL123
+    title: Updated Title
+    description: Desc
+    privacy: public
+"""
+        )
+
+        current = Playlist(id="PL123", title="Original", description="Desc")
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=current),
+            patch("ytrix.__main__.api.update_playlist"),
+        ):
+            result = cli_json.yaml2mlist(str(yaml_file))
+
+        assert result is not None
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert "playlists_processed" in parsed
+        assert parsed["playlists_processed"] == 1
+
+
+class TestErrorCases:
+    """Tests for error handling in CLI commands."""
+
+    def test_extract_playlist_id_invalid_chars(self) -> None:
+        """extract_playlist_id raises on invalid characters."""
+        from ytrix.models import InvalidPlaylistError, extract_playlist_id
+
+        with pytest.raises(InvalidPlaylistError, match="Invalid characters"):
+            extract_playlist_id("PL@#$%invalid")
+
+    def test_extract_playlist_id_empty(self) -> None:
+        """extract_playlist_id raises on empty input."""
+        from ytrix.models import InvalidPlaylistError, extract_playlist_id
+
+        with pytest.raises(InvalidPlaylistError, match="Empty"):
+            extract_playlist_id("")
+
+    def test_extract_playlist_id_too_short(self) -> None:
+        """extract_playlist_id raises on too-short input."""
+        from ytrix.models import InvalidPlaylistError, extract_playlist_id
+
+        with pytest.raises(InvalidPlaylistError, match="too short"):
+            extract_playlist_id("P")
+
+    def test_plist2mlists_invalid_by(self, cli: YtrixCLI) -> None:
+        """plist2mlists raises on invalid --by value."""
+        with pytest.raises(ValueError, match="--by must be"):
+            cli.plist2mlists("PLtest", by="invalid")
+
+    def test_plists2mlist_empty_file(self, cli: YtrixCLI, tmp_path: Path) -> None:
+        """plists2mlist raises on empty file."""
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("")
+
+        with pytest.raises(ValueError, match="No playlist URLs found"):
+            cli.plists2mlist(str(empty_file))
+
+    def test_plists2mlist_comments_only(self, cli: YtrixCLI, tmp_path: Path) -> None:
+        """plists2mlist raises when file has only comments."""
+        comments_file = tmp_path / "comments.txt"
+        comments_file.write_text("# comment 1\n# comment 2\n")
+
+        with pytest.raises(ValueError, match="No playlist URLs found"):
+            cli.plists2mlist(str(comments_file))
+
+    def test_ls_missing_config(self, cli: YtrixCLI) -> None:
+        """ls raises when config file is missing."""
+        with (
+            patch("ytrix.__main__.load_config", side_effect=FileNotFoundError("Config not found")),
+            pytest.raises(FileNotFoundError, match="Config not found"),
+        ):
+            cli.ls()

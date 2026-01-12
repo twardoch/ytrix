@@ -1,0 +1,80 @@
+[project]
+name = "ytrix"
+version = "0.1.13"
+description = "YouTube playlist management CLI"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Adam Twardoch", email = "adam+github@twardoch.com" }
+]
+requires-python = ">=3.12"
+keywords = ["youtube", "playlist", "cli", "youtube-api", "yt-dlp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fire>=0.5.0",
+    "rich>=13.0.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-oauthlib>=1.1.0",
+    "yt-dlp>=2024.1.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0.0",
+    "loguru>=0.7.0",
+    "tenacity>=8.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+ytrix = "ytrix.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/twardoch/ytrix"
+Repository = "https://github.com/twardoch/ytrix"
+Issues = "https://github.com/twardoch/ytrix/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ytrix"]
+
+[tool.hatch.build.targets.sdist]
+include = ["ytrix"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-xvs -m 'not integration'"
+markers = [
+    "integration: tests that call real external services (deselect with '-m \"not integration\"')",
+]
