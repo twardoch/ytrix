@@ -42,6 +42,7 @@ ytrix config             # Show config status and setup guide
 ytrix ls                 # List your playlists
 ytrix cache_stats        # Show cache statistics
 ytrix cache_clear        # Clear all cached data
+ytrix journal_status     # Show batch operation progress
 ytrix <command> --help   # Help for any command
 ```
 

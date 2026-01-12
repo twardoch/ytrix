@@ -203,17 +203,19 @@ class YtrixCLI:
 
         if self._json:
             tasks_data = [t.to_dict() for t in journal.tasks]
-            return self._output({
-                "batch_id": journal.batch_id,
-                "created_at": journal.created_at,
-                "summary": summary,
-                "tasks": tasks_data,
-            })
+            return self._output(
+                {
+                    "batch_id": journal.batch_id,
+                    "created_at": journal.created_at,
+                    "summary": summary,
+                    "tasks": tasks_data,
+                }
+            )
 
         console.print(f"[bold]Batch:[/bold] {journal.batch_id}")
         console.print(f"[bold]Created:[/bold] {journal.created_at}")
         console.print()
-        console.print(f"[bold]Summary:[/bold]")
+        console.print("[bold]Summary:[/bold]")
         console.print(f"  Total: {summary['total']}")
         console.print(f"  [green]Completed: {summary['completed']}[/green]")
         console.print(f"  [blue]Skipped: {summary['skipped']}[/blue]")

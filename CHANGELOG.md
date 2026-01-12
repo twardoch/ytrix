@@ -2,7 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2026-01-12
+## [Unreleased]
+
+### Added
+
+- `journal_status` CLI command to view batch operation progress
+  - Shows summary counts by status (pending, completed, failed, skipped)
+  - Displays details of failed tasks with error messages
+  - `--clear` flag to delete the journal
+  - JSON output support with `--json-output`
+- Git-tag-based semantic versioning via hatch-vcs
+
+### Changed
+
+- Version is now derived from git tags (e.g., `v1.1.0`)
+- Updated test count to 204 (76% coverage)
+
+## [1.0.0] - 2026-01-12
 
 ### Added
 

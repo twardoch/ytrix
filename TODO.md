@@ -1,10 +1,10 @@
 # ytrix TODO
 
-## In Progress (v0.2.0)
+## Completed (v1.1.0-dev)
 
-### All v0.2.0 tasks complete - ready for release
-
-## Completed (v0.2.0-dev)
+### Build & Version
+- [x] Configure hatch-vcs for git-tag-based semver
+- [x] Add `journal_status` CLI command
 
 ### plist2mlist Deduplication
 - [x] Update `plist2mlist` with `--dedup` flag (default True)
@@ -44,7 +44,7 @@
 - [x] YAML-based playlist editing workflow
 
 ### Testing & Quality
-- [x] 197 tests (was 127)
+- [x] 204 tests with 76% coverage
 - [x] mypy strict mode compliant
 - [x] ruff linting and formatting
 

@@ -21,11 +21,15 @@ class TestCLICommands:
             "ls",
             "plist2mlist",
             "plists2mlist",
+            "plists2mlists",
             "plist2mlists",
             "mlists2yaml",
             "yaml2mlists",
             "mlist2yaml",
             "yaml2mlist",
+            "cache_stats",
+            "cache_clear",
+            "journal_status",
         ]
         for cmd in expected:
             assert hasattr(YtrixCLI, cmd), f"Missing command: {cmd}"
@@ -39,11 +43,15 @@ class TestCLICommands:
             "ls",
             "plist2mlist",
             "plists2mlist",
+            "plists2mlists",
             "plist2mlists",
             "mlists2yaml",
             "yaml2mlists",
             "mlist2yaml",
             "yaml2mlist",
+            "cache_stats",
+            "cache_clear",
+            "journal_status",
         ]
         for cmd in commands:
             method = getattr(YtrixCLI, cmd)
@@ -916,3 +924,108 @@ class TestErrorCases:
             pytest.raises(FileNotFoundError, match="Config not found"),
         ):
             cli.ls()
+
+
+class TestJournalStatus:
+    """Tests for journal_status command."""
+
+    def test_journal_status_no_journal(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Shows message when no journal exists."""
+        with patch("ytrix.__main__.load_journal", return_value=None):
+            cli.journal_status()
+        captured = capsys.readouterr()
+        assert "No journal found" in captured.out
+
+    def test_journal_status_json_no_journal(self, cli_json: YtrixCLI, capsys) -> None:
+        """JSON output when no journal exists."""
+        import json as json_mod
+
+        with patch("ytrix.__main__.load_journal", return_value=None):
+            cli_json.journal_status()
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["exists"] is False
+
+    def test_journal_status_shows_summary(self, cli: YtrixCLI, capsys) -> None:
+        """Shows journal summary when journal exists."""
+        from ytrix.journal import Journal, Task, TaskStatus
+
+        journal = Journal(
+            batch_id="test_batch",
+            created_at="2024-01-01T00:00:00",
+            tasks=[
+                Task(source_playlist_id="PL1", source_title="Test1", status=TaskStatus.COMPLETED),
+                Task(source_playlist_id="PL2", source_title="Test2", status=TaskStatus.PENDING),
+            ],
+        )
+        with patch("ytrix.__main__.load_journal", return_value=journal):
+            cli.journal_status()
+        captured = capsys.readouterr()
+        assert "test_batch" in captured.out
+        assert "Total: 2" in captured.out
+        assert "Completed: 1" in captured.out
+        assert "Pending: 1" in captured.out
+
+    def test_journal_status_json(self, cli_json: YtrixCLI, capsys) -> None:
+        """JSON output includes full journal data."""
+        import json as json_mod
+
+        from ytrix.journal import Journal, Task, TaskStatus
+
+        journal = Journal(
+            batch_id="test_batch",
+            created_at="2024-01-01T00:00:00",
+            tasks=[
+                Task(source_playlist_id="PL1", source_title="Test1", status=TaskStatus.COMPLETED),
+            ],
+        )
+        with patch("ytrix.__main__.load_journal", return_value=journal):
+            cli_json.journal_status()
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["batch_id"] == "test_batch"
+        assert len(parsed["tasks"]) == 1
+        assert parsed["summary"]["completed"] == 1
+
+    def test_journal_status_clear(self, cli: YtrixCLI, capsys) -> None:
+        """--clear flag clears the journal."""
+        with patch("ytrix.__main__.clear_journal") as mock_clear:
+            cli.journal_status(clear=True)
+        mock_clear.assert_called_once()
+        captured = capsys.readouterr()
+        assert "Journal cleared" in captured.out
+
+    def test_journal_status_clear_json(self, cli_json: YtrixCLI, capsys) -> None:
+        """JSON output when clearing journal."""
+        import json as json_mod
+
+        with patch("ytrix.__main__.clear_journal"):
+            cli_json.journal_status(clear=True)
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["cleared"] is True
+
+    def test_journal_status_shows_failed_tasks(self, cli: YtrixCLI, capsys) -> None:
+        """Shows details of failed tasks."""
+        from ytrix.journal import Journal, Task, TaskStatus
+
+        journal = Journal(
+            batch_id="test_batch",
+            created_at="2024-01-01T00:00:00",
+            tasks=[
+                Task(
+                    source_playlist_id="PL1",
+                    source_title="Failed Task",
+                    status=TaskStatus.FAILED,
+                    error="API error",
+                    retry_count=2,
+                ),
+            ],
+        )
+        with patch("ytrix.__main__.load_journal", return_value=journal):
+            cli.journal_status()
+        captured = capsys.readouterr()
+        assert "Failed tasks:" in captured.out
+        assert "Failed Task" in captured.out
+        assert "API error" in captured.out
+        assert "Retries: 2" in captured.out
