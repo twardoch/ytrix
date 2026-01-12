@@ -87,7 +87,7 @@ def get_youtube_client(config: Config) -> Resource:
     return build("youtube", "v3", credentials=creds)
 
 
-@api_retry
+@api_retry  # type: ignore[misc]  # type: ignore[misc]
 def create_playlist(
     client: Resource, title: str, description: str = "", privacy: str = "public"
 ) -> str:
@@ -101,7 +101,7 @@ def create_playlist(
     return playlist_id
 
 
-@api_retry
+@api_retry  # type: ignore[misc]
 def update_playlist(
     client: Resource,
     playlist_id: str,
@@ -128,7 +128,7 @@ def update_playlist(
     client.playlists().update(part="snippet,status", body=body).execute()
 
 
-@api_retry
+@api_retry  # type: ignore[misc]
 def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
     """Add video to playlist and return playlistItem ID. (50 quota units)"""
     body = {
@@ -142,7 +142,7 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
     return item_id
 
 
-@api_retry
+@api_retry  # type: ignore[misc]
 def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     """Remove video from playlist by playlistItem ID. (50 quota units)"""
     client.playlistItems().delete(id=playlist_item_id).execute()

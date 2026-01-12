@@ -170,7 +170,9 @@ class YtrixCLI:
         console.print(f"[green]{msg}[/green]")
         return None
 
-    def journal_status(self, clear: bool = False) -> dict[str, Any] | None:
+    def journal_status(
+        self, clear: bool = False, pending_only: bool = False
+    ) -> dict[str, Any] | None:
         """Show batch operation journal status.
 
         Displays the current batch operation journal, including task counts by status
@@ -178,10 +180,12 @@ class YtrixCLI:
 
         Args:
             clear: Delete the journal file
+            pending_only: Show only pending and failed tasks (tasks that need work)
 
         Example:
-            ytrix journal_status         # Show journal status
-            ytrix journal_status --clear # Clear the journal
+            ytrix journal_status               # Show journal status
+            ytrix journal_status --clear       # Clear the journal
+            ytrix journal_status --pending-only # Show only incomplete tasks
             ytrix --json-output journal_status
         """
         if clear:
@@ -201,14 +205,25 @@ class YtrixCLI:
 
         summary = get_journal_summary(journal)
 
+        # Filter tasks if pending_only
+        if pending_only:
+            filtered_tasks = [
+                t
+                for t in journal.tasks
+                if t.status in (TaskStatus.PENDING, TaskStatus.FAILED, TaskStatus.IN_PROGRESS)
+            ]
+        else:
+            filtered_tasks = journal.tasks
+
         if self._json:
-            tasks_data = [t.to_dict() for t in journal.tasks]
+            tasks_data = [t.to_dict() for t in filtered_tasks]
             return self._output(
                 {
                     "batch_id": journal.batch_id,
                     "created_at": journal.created_at,
                     "summary": summary,
                     "tasks": tasks_data,
+                    "pending_only": pending_only,
                 }
             )
 
@@ -223,7 +238,7 @@ class YtrixCLI:
         console.print(f"  [red]Failed: {summary['failed']}[/red]")
 
         # Show failed tasks with errors
-        failed = [t for t in journal.tasks if t.status == TaskStatus.FAILED]
+        failed = [t for t in filtered_tasks if t.status == TaskStatus.FAILED]
         if failed:
             console.print()
             console.print("[bold red]Failed tasks:[/bold red]")
@@ -231,6 +246,15 @@ class YtrixCLI:
                 console.print(f"  {t.source_title}")
                 console.print(f"    [dim]Error: {t.error}[/dim]")
                 console.print(f"    [dim]Retries: {t.retry_count}[/dim]")
+
+        # Show pending tasks if pending_only
+        if pending_only:
+            pending = [t for t in filtered_tasks if t.status == TaskStatus.PENDING]
+            if pending:
+                console.print()
+                console.print("[bold yellow]Pending tasks:[/bold yellow]")
+                for t in pending:
+                    console.print(f"  {t.source_title}")
 
         return None
 

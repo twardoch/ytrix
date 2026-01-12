@@ -10,13 +10,15 @@ All notable changes to this project will be documented in this file.
   - Shows summary counts by status (pending, completed, failed, skipped)
   - Displays details of failed tasks with error messages
   - `--clear` flag to delete the journal
+  - `--pending-only` flag to show only incomplete tasks
   - JSON output support with `--json-output`
 - Git-tag-based semantic versioning via hatch-vcs
 
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 204 (76% coverage)
+- Updated test count to 206 (76% coverage)
+- Added type ignore comments for tenacity decorators (mypy compatibility)
 
 ## [1.0.0] - 2026-01-12
 

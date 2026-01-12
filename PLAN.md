@@ -148,9 +148,10 @@
 
 ## Success Criteria
 
-- [x] All 10 commands functional (7 core + ls + version + config)
-- [x] Tests pass with >80% coverage (197 tests)
+- [x] All 14 commands functional (7 core + ls + version + config + cache_stats + cache_clear + journal_status + plists2mlists)
+- [x] Tests pass with 76% coverage (206 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes
 - [x] --json-output flag for scripting on all commands
+- [x] Git-tag-based semantic versioning via hatch-vcs

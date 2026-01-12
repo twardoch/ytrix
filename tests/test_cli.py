@@ -1029,3 +1029,48 @@ class TestJournalStatus:
         assert "Failed Task" in captured.out
         assert "API error" in captured.out
         assert "Retries: 2" in captured.out
+
+    def test_journal_status_pending_only(self, cli: YtrixCLI, capsys) -> None:
+        """--pending-only filters to incomplete tasks."""
+        from ytrix.journal import Journal, Task, TaskStatus
+
+        journal = Journal(
+            batch_id="test_batch",
+            created_at="2024-01-01T00:00:00",
+            tasks=[
+                Task(source_playlist_id="PL1", source_title="Done", status=TaskStatus.COMPLETED),
+                Task(
+                    source_playlist_id="PL2", source_title="Pending Task", status=TaskStatus.PENDING
+                ),
+                Task(
+                    source_playlist_id="PL3", source_title="Failed Task", status=TaskStatus.FAILED
+                ),
+            ],
+        )
+        with patch("ytrix.__main__.load_journal", return_value=journal):
+            cli.journal_status(pending_only=True)
+        captured = capsys.readouterr()
+        assert "Pending tasks:" in captured.out
+        assert "Pending Task" in captured.out
+
+    def test_journal_status_pending_only_json(self, cli_json: YtrixCLI, capsys) -> None:
+        """JSON output with --pending-only filters tasks."""
+        import json as json_mod
+
+        from ytrix.journal import Journal, Task, TaskStatus
+
+        journal = Journal(
+            batch_id="test_batch",
+            created_at="2024-01-01T00:00:00",
+            tasks=[
+                Task(source_playlist_id="PL1", source_title="Done", status=TaskStatus.COMPLETED),
+                Task(source_playlist_id="PL2", source_title="Pending", status=TaskStatus.PENDING),
+            ],
+        )
+        with patch("ytrix.__main__.load_journal", return_value=journal):
+            cli_json.journal_status(pending_only=True)
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["pending_only"] is True
+        assert len(parsed["tasks"]) == 1
+        assert parsed["tasks"][0]["source_title"] == "Pending"
