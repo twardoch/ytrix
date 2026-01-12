@@ -56,6 +56,15 @@ ytrix ls --count              # Include video counts (slower)
 ytrix --json-output ls        # JSON format for scripting
 ```
 
+### List another channel's playlists
+
+```bash
+ytrix ls --user @channelhandle           # By handle
+ytrix ls --user UCxxxxxx                 # By channel ID
+ytrix ls --user @channelhandle --count   # With video counts
+ytrix ls --user @channelhandle --urls    # URLs only (pipe to file)
+```
+
 ### Copy external playlist to your channel
 
 ```bash
