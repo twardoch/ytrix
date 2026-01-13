@@ -424,3 +424,96 @@ class TestExtractAndSavePlaylistInfo:
         md_content = (playlist_folder / "001_Video 1.en.md").read_text()
         assert "id: v1" in md_content
         assert "Hello world." in md_content
+
+
+class TestThrottler:
+    """Tests for Throttler class."""
+
+    def test_initial_delay(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        assert throttler.delay_ms == 100
+
+    def test_on_success_resets_errors(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler._consecutive_errors = 5
+        throttler.on_success()
+        assert throttler._consecutive_errors == 0
+
+    def test_on_success_reduces_delay_toward_base(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler._delay_ms = 1000
+        throttler.on_success()
+        assert throttler._delay_ms == 900  # 1000 * 0.9
+
+    def test_on_success_does_not_go_below_base(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler._delay_ms = 100
+        throttler.on_success()
+        assert throttler._delay_ms == 100
+
+    def test_on_error_increases_delay_modest(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler.on_error(is_rate_limit=False)
+        assert throttler._delay_ms == 150  # 100 * 1.5
+        assert throttler._consecutive_errors == 1
+
+    def test_on_error_rate_limit_aggressive_backoff(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler.on_error(is_rate_limit=True)
+        # 100 * 2 + 1000 = 1200
+        assert throttler._delay_ms == 1200
+        assert throttler._consecutive_errors == 1
+
+    def test_on_error_caps_at_max(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        throttler._delay_ms = 29000
+        throttler.on_error(is_rate_limit=True)
+        assert throttler._delay_ms == 30000  # Capped
+
+    def test_get_retry_delay_exponential(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        # Base delays: 2^0=1? No, 2^attempt, so 2, 4, 8, 16, 32, 60
+        d0 = throttler.get_retry_delay(0)
+        d1 = throttler.get_retry_delay(1)
+        d2 = throttler.get_retry_delay(2)
+        # Base is 2^attempt, min 60
+        assert 1 <= d0 <= 2  # 2^0=1 + jitter (up to 0.5)
+        assert 2 <= d1 <= 4  # 2^1=2 + jitter (up to 1)
+        assert 4 <= d2 <= 8  # 2^2=4 + jitter (up to 2)
+
+    def test_get_retry_delay_caps_at_60(self) -> None:
+        throttler = info.Throttler(delay_ms=100)
+        d10 = throttler.get_retry_delay(10)  # 2^10=1024 -> capped at 60
+        assert 60 <= d10 <= 90  # 60 + up to 30 jitter
+
+
+class TestIsRateLimitError:
+    """Tests for _is_rate_limit_error helper."""
+
+    def test_detects_429(self) -> None:
+        exc = Exception("HTTP Error 429: Too Many Requests")
+        assert info._is_rate_limit_error(exc) is True
+
+    def test_detects_rate_limit_text(self) -> None:
+        exc = Exception("RATE_LIMIT_EXCEEDED error")
+        assert info._is_rate_limit_error(exc) is True
+
+    def test_detects_too_many(self) -> None:
+        exc = Exception("too many requests please slow down")
+        assert info._is_rate_limit_error(exc) is True
+
+    def test_ignores_other_errors(self) -> None:
+        exc = Exception("Network connection failed")
+        assert info._is_rate_limit_error(exc) is False
+
+
+class TestSetYtdlpThrottleDelay:
+    """Tests for set_ytdlp_throttle_delay function."""
+
+    def test_sets_delay(self) -> None:
+        original = info._ytdlp_throttler._delay_ms
+        info.set_ytdlp_throttle_delay(1000)
+        assert info._ytdlp_throttler._delay_ms == 1000
+        assert info._ytdlp_throttler._base_delay_ms == 1000
+        # Restore
+        info.set_ytdlp_throttle_delay(original)

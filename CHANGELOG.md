@@ -32,7 +32,7 @@ All notable changes to this project will be documented in this file.
 - **Request throttling**: `--throttle` flag to set delay between API writes (default 200ms)
   - Helps avoid 429 rate limit errors on batch operations
   - Set to 0 to disable throttling
-- **Smart throttling for yt-dlp operations** (info extraction):
+- **Smart throttling for yt-dlp operations** (info extraction and extractor):
   - Adaptive backoff: automatically increases delay on rate limit errors
   - Retry logic: up to 5 retries with exponential backoff (2-60s)
   - Jitter: randomized delays to avoid thundering herd
@@ -40,6 +40,8 @@ All notable changes to this project will be documented in this file.
   - Subtitle downloads: 3 retries with backoff for 429 errors
   - Video delay: configurable pause between video processing (default 0.5s)
   - Progress summary: reports success/failure counts at completion
+  - `--delay` flag for `plist2info` and `plists2info` commands
+  - 14 new tests for Throttler class (308 total tests)
 
 ### Changed
 

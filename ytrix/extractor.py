@@ -1,10 +1,12 @@
 """yt-dlp wrapper for metadata extraction using Python API with caching."""
 
+import time
 from typing import Any
 
 from yt_dlp import YoutubeDL
 
 from ytrix import cache
+from ytrix.info import _is_rate_limit_error, _ytdlp_throttler
 from ytrix.logging import logger
 from ytrix.models import Playlist, Video, extract_playlist_id
 
@@ -17,14 +19,37 @@ _BASE_OPTS: dict[str, Any] = {
 }
 
 
-def _extract_info(url: str, flat: bool = True) -> dict[str, Any]:
-    """Run yt-dlp extract_info and return the result dict."""
+def _extract_info(url: str, flat: bool = True, max_retries: int = 5) -> dict[str, Any]:
+    """Run yt-dlp extract_info with throttling and retry logic."""
     opts = {**_BASE_OPTS, "extract_flat": flat}
-    with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if info is None:
-            raise RuntimeError(f"yt-dlp returned no info for {url}")
-        return info
+
+    for attempt in range(max_retries):
+        _ytdlp_throttler.wait()
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info is None:
+                    raise RuntimeError(f"yt-dlp returned no info for {url}")
+            _ytdlp_throttler.on_success()
+            return info
+        except Exception as e:
+            is_rate_limit = _is_rate_limit_error(e)
+            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)
+
+            if attempt < max_retries - 1 and is_rate_limit:
+                delay = _ytdlp_throttler.get_retry_delay(attempt)
+                logger.warning(
+                    "Rate limit on {}, retry {}/{} in {:.1f}s",
+                    url[:50],
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+    raise RuntimeError(f"Failed to extract info for {url} after {max_retries} attempts")
 
 
 def extract_playlist(url_or_id: str, use_cache: bool = True) -> Playlist:

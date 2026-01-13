@@ -2,6 +2,12 @@
 
 ## Completed (v1.2.0-dev) - Quota & Rate Limit + Info Extraction
 
+### Smart Throttling for yt-dlp
+- [x] Throttler class with adaptive backoff in info.py
+- [x] Apply throttling to extractor.py (shared with info.py)
+- [x] `--delay` flag for plist2info/plists2info commands
+- [x] 14 tests for Throttler class (43 total in test_info.py)
+
 ### Playlist Info Extraction (Phase 8)
 - [x] Create info.py module with VideoInfo, PlaylistInfo dataclasses
 - [x] Extract subtitles (manual and automatic) via yt-dlp

@@ -1326,6 +1326,7 @@ class YtrixCLI:
         url_or_id: str,
         output: str | None = None,
         max_languages: int = 5,
+        delay: float = 0.5,
     ) -> str | dict[str, Any] | None:
         """Extract playlist info with subtitles and transcripts.
 
@@ -1340,11 +1341,12 @@ class YtrixCLI:
             url_or_id: Playlist URL or ID
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
+            delay: Seconds between video processing (default: 0.5, set higher if rate limited)
 
         Example:
             ytrix plist2info PLxxx
             ytrix plist2info PLxxx --output ./transcripts
-            ytrix plist2info PLxxx --max-languages 3
+            ytrix plist2info PLxxx --max-languages 3 --delay 1.0
         """
         output_dir = Path(output) if output else Path.cwd()
 
@@ -1360,6 +1362,7 @@ class YtrixCLI:
             output_dir,
             max_languages=max_languages,
             progress_callback=progress_cb,
+            video_delay=delay,
         )
 
         playlist_folder = output_dir / info._sanitize_filename(playlist.title)
@@ -1383,6 +1386,7 @@ class YtrixCLI:
         file_path: str,
         output: str | None = None,
         max_languages: int = 5,
+        delay: float = 0.5,
     ) -> list[str] | dict[str, Any] | None:
         """Extract info from multiple playlists with subtitles and transcripts.
 
@@ -1393,11 +1397,12 @@ class YtrixCLI:
             file_path: Text file with playlist URLs/IDs (one per line)
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
+            delay: Seconds between video processing (default: 0.5, set higher if rate limited)
 
         Example:
             ytrix plists2info playlists.txt
             ytrix plists2info playlists.txt --output ./transcripts
-            ytrix plists2info playlists.txt --max-languages 2
+            ytrix plists2info playlists.txt --max-languages 2 --delay 1.0
         """
         output_dir = Path(output) if output else Path.cwd()
 
@@ -1428,6 +1433,7 @@ class YtrixCLI:
                     output_dir,
                     max_languages=max_languages,
                     progress_callback=progress_cb,
+                    video_delay=delay,
                 )
 
                 playlist_folder = output_dir / info._sanitize_filename(playlist.title)
