@@ -209,6 +209,27 @@ class TestUpdateTask:
         assert loaded is not None
         assert loaded.tasks[0].videos_added == 5
 
+    def test_updates_error(self, temp_journal_dir: Path) -> None:
+        """Updates error field."""
+        journal = create_journal([("PL1", "Test")])
+        update_task(journal, "PL1", error="Network timeout")
+
+        assert journal.tasks[0].error == "Network timeout"
+
+    def test_updates_match_type(self, temp_journal_dir: Path) -> None:
+        """Updates match_type field."""
+        journal = create_journal([("PL1", "Test")])
+        update_task(journal, "PL1", match_type="exact")
+
+        assert journal.tasks[0].match_type == "exact"
+
+    def test_updates_match_playlist_id(self, temp_journal_dir: Path) -> None:
+        """Updates match_playlist_id field."""
+        journal = create_journal([("PL1", "Test")])
+        update_task(journal, "PL1", match_playlist_id="PLexisting123")
+
+        assert journal.tasks[0].match_playlist_id == "PLexisting123"
+
 
 class TestGetPendingTasks:
     """Tests for get_pending_tasks function."""

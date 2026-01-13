@@ -144,6 +144,20 @@ Hello world.
         assert "<c." not in result
         assert "</c>" not in result
 
+    def test_skips_header_metadata(self) -> None:
+        """Skips metadata lines between WEBVTT and first cue."""
+        vtt = """WEBVTT
+Kind: captions
+Language: en
+
+00:00:00.000 --> 00:00:02.000
+Hello.
+"""
+        result = info.vtt_to_transcript(vtt)
+        assert "Kind:" not in result
+        assert "Language:" not in result
+        assert "Hello." in result
+
 
 class TestSubtitleToTranscript:
     """Tests for subtitle_to_transcript function."""
@@ -157,6 +171,30 @@ class TestSubtitleToTranscript:
         vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello."
         result = info.subtitle_to_transcript(vtt, "vtt")
         assert "Hello." in result
+
+    def test_webvtt_extension(self) -> None:
+        """Handles webvtt extension."""
+        vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello."
+        result = info.subtitle_to_transcript(vtt, "webvtt")
+        assert "Hello." in result
+
+    def test_unknown_extension_with_arrow(self) -> None:
+        """Detects format from content when extension unknown."""
+        srt = "1\n00:00:00,000 --> 00:00:02,000\nHello SRT."
+        result = info.subtitle_to_transcript(srt, "txt")
+        assert "Hello SRT." in result
+
+    def test_unknown_extension_with_webvtt_header(self) -> None:
+        """Detects VTT from WEBVTT header when extension unknown."""
+        vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello VTT."
+        result = info.subtitle_to_transcript(vtt, "txt")
+        assert "Hello VTT." in result
+
+    def test_unknown_format_returns_as_is(self) -> None:
+        """Returns unknown format content unchanged."""
+        content = "Plain text without timestamps"
+        result = info.subtitle_to_transcript(content, "unknown")
+        assert result == content
 
     def test_auto_detects_format_from_content(self) -> None:
         vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello."
@@ -642,3 +680,162 @@ class TestSetYtdlpThrottleDelay:
         assert info._ytdlp_throttler._base_delay_ms == 1000
         # Restore
         info.set_ytdlp_throttle_delay(original)
+
+
+class TestSubtitleToTranscriptFormats:
+    """Tests for subtitle_to_transcript format detection."""
+
+    def test_srt_format(self) -> None:
+        """Uses SRT parser for .srt extension."""
+        srt = "1\n00:00:01,000 --> 00:00:02,000\nHello\n"
+        result = info.subtitle_to_transcript(srt, "srt")
+        assert "Hello" in result
+
+    def test_vtt_format(self) -> None:
+        """Uses VTT parser for .vtt extension."""
+        vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nWorld\n"
+        result = info.subtitle_to_transcript(vtt, "vtt")
+        assert "World" in result
+
+    def test_webvtt_format(self) -> None:
+        """Uses VTT parser for .webvtt extension."""
+        vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nTest\n"
+        result = info.subtitle_to_transcript(vtt, "webvtt")
+        assert "Test" in result
+
+    def test_unknown_format_with_vtt_header(self) -> None:
+        """Detects VTT by header for unknown extensions."""
+        vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nAuto VTT\n"
+        result = info.subtitle_to_transcript(vtt, "txt")
+        assert "Auto VTT" in result
+
+    def test_unknown_format_with_timestamps(self) -> None:
+        """Falls back to SRT parser for unknown format with timestamps."""
+        srt = "1\n00:00:01,000 --> 00:00:02,000\nAuto SRT\n"
+        result = info.subtitle_to_transcript(srt, "unknown")
+        assert "Auto SRT" in result
+
+    def test_unknown_format_returns_as_is(self) -> None:
+        """Returns content unchanged for unknown format without timestamps."""
+        content = "Just plain text without any timestamps"
+        result = info.subtitle_to_transcript(content, "xyz")
+        assert result == content
+
+
+class TestVttToTranscriptHeader:
+    """Tests for vtt_to_transcript header handling."""
+
+    def test_skips_vtt_header_lines(self) -> None:
+        """Skips metadata lines after WEBVTT header."""
+        vtt = """WEBVTT
+Kind: captions
+Language: en
+
+00:00:01.000 --> 00:00:02.000
+Hello
+"""
+        result = info.vtt_to_transcript(vtt)
+        assert "Hello" in result
+        assert "Kind" not in result
+        assert "Language" not in result
+
+
+class TestExtractVideoInfoRetry:
+    """Tests for extract_video_info retry logic."""
+
+    def test_retries_on_rate_limit(self) -> None:
+        """Retries with backoff on rate limit errors."""
+        call_count = 0
+
+        def mock_extract(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("HTTP Error 429: Too Many Requests")
+            return {
+                "id": "test123",
+                "title": "Test",
+                "description": "Desc",
+                "duration": 100,
+                "channel": "Ch",
+                "view_count": 1,
+                "like_count": 0,
+                "upload_date": "20240101",
+                "subtitles": {},
+                "automatic_captions": {},
+            }
+
+        mock_ydl = MagicMock()
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_ydl.extract_info = mock_extract
+
+        with (
+            patch("ytrix.info.YoutubeDL", return_value=mock_ydl),
+            patch("ytrix.info.time.sleep"),  # Skip actual sleep
+        ):
+            result = info.extract_video_info("test123", max_retries=3)
+
+        assert call_count == 2
+        assert result.id == "test123"
+
+    def test_raises_after_max_retries(self) -> None:
+        """Raises on non-rate-limit error without retry."""
+        mock_ydl = MagicMock()
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_ydl.extract_info.side_effect = Exception("Video unavailable")
+
+        with (
+            patch("ytrix.info.YoutubeDL", return_value=mock_ydl),
+            pytest.raises(Exception, match="Video unavailable"),
+        ):
+            info.extract_video_info("test123", max_retries=3)
+
+
+class TestExtractPlaylistInfoRetry:
+    """Tests for extract_playlist_info retry logic."""
+
+    def test_retries_on_rate_limit(self) -> None:
+        """Retries with backoff on rate limit errors."""
+        call_count = 0
+
+        def mock_extract(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("RATE_LIMIT_EXCEEDED")
+            return {
+                "id": "PLtest",
+                "title": "Playlist",
+                "description": "",
+                "uploader": "Channel",
+                "entries": [{"id": "v1", "title": "V1", "channel": "C", "duration": 60}],
+            }
+
+        mock_ydl = MagicMock()
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_ydl.extract_info = mock_extract
+
+        with (
+            patch("ytrix.info.YoutubeDL", return_value=mock_ydl),
+            patch("ytrix.info.time.sleep"),
+        ):
+            result = info.extract_playlist_info("PLtest", max_retries=3)
+
+        assert call_count == 2
+        assert result.id == "PLtest"
+
+    def test_raises_when_no_data(self) -> None:
+        """Raises RuntimeError when yt-dlp returns None."""
+        mock_ydl = MagicMock()
+        mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_ydl.extract_info.return_value = None
+
+        with (
+            patch("ytrix.info.YoutubeDL", return_value=mock_ydl),
+            pytest.raises(RuntimeError, match="returned no info"),
+        ):
+            info.extract_playlist_info("PLtest", max_retries=1)

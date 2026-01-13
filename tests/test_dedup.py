@@ -1,5 +1,8 @@
 """Tests for ytrix.dedup module."""
 
+from unittest.mock import patch
+
+from ytrix import dedup
 from ytrix.dedup import (
     MatchResult,
     MatchType,
@@ -190,3 +193,39 @@ class TestMatchResult:
         assert result.overlap_percent == 0.0
         assert result.missing_videos is None
         assert result.extra_videos is None
+
+
+class TestLoadTargetPlaylistsWithVideos:
+    """Tests for load_target_playlists_with_videos function."""
+
+    def test_loads_playlists_from_channel(self) -> None:
+        """Loads playlists using yt-dlp extractor."""
+        mock_playlists = [
+            Playlist(
+                id="PL1",
+                title="Test 1",
+                videos=[Video(id="v1", title="V1", channel="C", position=0)],
+            ),
+            Playlist(
+                id="PL2",
+                title="Test 2",
+                videos=[Video(id="v2", title="V2", channel="C", position=0)],
+            ),
+        ]
+        with patch(
+            "ytrix.dedup.extractor.extract_channel_playlists_with_videos",
+            return_value=mock_playlists,
+        ) as mock_extract:
+            result = dedup.load_target_playlists_with_videos("UC123")
+            mock_extract.assert_called_once_with("UC123")
+            assert len(result) == 2
+            assert result[0].id == "PL1"
+
+    def test_returns_empty_list_on_error(self) -> None:
+        """Returns empty list when extraction fails."""
+        with patch(
+            "ytrix.dedup.extractor.extract_channel_playlists_with_videos",
+            side_effect=Exception("Network error"),
+        ):
+            result = dedup.load_target_playlists_with_videos("UC123")
+            assert result == []
