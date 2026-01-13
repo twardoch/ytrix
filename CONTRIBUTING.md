@@ -13,14 +13,17 @@ uv pip install -e ".[dev]"
 ## Running Tests
 
 ```bash
-# All tests
-pytest -xvs
+# All checks (lint, type, unit, integration, functional)
+./test.sh
+
+# Unit tests only
+uvx pytest -xvs
 
 # With coverage
-pytest --cov=ytrix --cov-report=term-missing
+uvx pytest --cov=ytrix --cov-report=term-missing
 
 # Skip integration tests (default)
-pytest -m "not integration"
+uvx pytest -m "not integration"
 ```
 
 ## Code Quality

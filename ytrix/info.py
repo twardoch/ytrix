@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import random
 import re
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
 import yaml
 from yt_dlp import YoutubeDL
 
@@ -104,20 +104,6 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
     """Check if exception indicates a rate limit error."""
     msg = str(exc).lower()
     return "429" in msg or "rate" in msg or "too many" in msg
-
-
-def _retry_after_seconds(headers: httpx.Headers) -> float | None:
-    """Parse Retry-After header value in seconds, if present."""
-    value = headers.get("Retry-After")
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        return None
-    if seconds < 0:
-        return None
-    return seconds
 
 
 @dataclass
@@ -399,42 +385,71 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
     )
 
 
-def download_subtitle(sub: SubtitleInfo, max_retries: int = 5) -> str | None:
-    """Download subtitle content from URL with retry logic.
+def download_subtitle(
+    sub: SubtitleInfo, video_id: str | None = None, max_retries: int = 5
+) -> str | None:
+    """Download subtitle content using yt-dlp.
+
+    Uses yt-dlp for downloading to benefit from its rate limiting,
+    session management, and retry logic.
 
     Args:
-        sub: SubtitleInfo with URL
-        max_retries: Maximum retry attempts on rate limit errors
+        sub: SubtitleInfo with language and source info
+        video_id: YouTube video ID (required for yt-dlp download)
+        max_retries: Maximum retry attempts
 
     Returns:
         Subtitle file content as string, or None if failed
     """
-    if not sub.url:
+    if not video_id:
+        logger.warning("video_id required for subtitle download")
         return None
 
-    with httpx.Client(timeout=30.0) as client:
-        for attempt in range(max_retries):
-            _subtitle_throttler.wait()
-            try:
-                response = client.get(sub.url)
-                response.raise_for_status()
-                _subtitle_throttler.on_success()
-                return response.text
-            except httpx.HTTPStatusError as e:
-                is_rate_limit = e.response.status_code == 429
-                _subtitle_throttler.on_error(is_rate_limit=is_rate_limit)
-                if is_rate_limit and attempt < max_retries - 1:
-                    retry_after = _retry_after_seconds(e.response.headers)
-                    delay = max(_subtitle_throttler.get_retry_delay(attempt), retry_after or 0)
-                    logger.debug("Subtitle rate limit, retry in {:.1f}s", delay)
-                    time.sleep(delay)
-                    continue
-                logger.warning("Failed to download subtitle: {}", e)
-                return None
-            except Exception as e:
-                _subtitle_throttler.on_error(is_rate_limit=False)
-                logger.warning("Failed to download subtitle: {}", e)
-                return None
+    for attempt in range(max_retries):
+        _subtitle_throttler.wait()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Configure yt-dlp for subtitle-only download
+                ydl_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "skip_download": True,  # Don't download video
+                    "writesubtitles": sub.source == "manual",
+                    "writeautomaticsub": sub.source == "automatic",
+                    "subtitleslangs": [sub.lang],
+                    "subtitlesformat": sub.ext if sub.ext in ("srt", "vtt") else "srt",
+                    "outtmpl": f"{tmpdir}/%(id)s.%(ext)s",
+                }
+
+                with YoutubeDL(ydl_opts) as ydl:
+                    url = f"https://www.youtube.com/watch?v={video_id}"
+                    ydl.download([url])
+
+                # Find the downloaded subtitle file
+                tmppath = Path(tmpdir)
+                sub_files = list(tmppath.glob(f"{video_id}.{sub.lang}.*"))
+                if not sub_files:
+                    # Try broader pattern (auto subs may have different naming)
+                    sub_files = list(tmppath.glob(f"{video_id}.*{sub.lang}*"))
+
+                if sub_files:
+                    content = sub_files[0].read_text(encoding="utf-8")
+                    _subtitle_throttler.on_success()
+                    return content
+                else:
+                    logger.debug("No subtitle file found for {} lang={}", video_id, sub.lang)
+                    return None
+
+        except Exception as e:
+            is_rate_limit = _is_rate_limit_error(e)
+            _subtitle_throttler.on_error(is_rate_limit=is_rate_limit)
+            if is_rate_limit and attempt < max_retries - 1:
+                delay = _subtitle_throttler.get_retry_delay(attempt)
+                logger.debug("Subtitle rate limit, retry in {:.1f}s", delay)
+                time.sleep(delay)
+                continue
+            logger.warning("Failed to download subtitle for {}: {}", video_id, e)
+            return None
 
     return None
 
@@ -683,7 +698,7 @@ def extract_and_save_playlist_info(
 
             # Download and save subtitles
             for sub in selected_subs:
-                content = download_subtitle(sub)
+                content = download_subtitle(sub, video_id=video.id)
                 if not content:
                     continue
 

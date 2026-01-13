@@ -93,7 +93,40 @@ Token expired?
 
 API quota exceeded?
   - YouTube API has daily limits; wait 24 hours
-  - Or create a new project
+  - Or set up multi-project rotation (see below)
+
+MULTI-PROJECT SETUP (Advanced)
+------------------------------
+For heavy batch operations, you can configure multiple GCP projects.
+ytrix will automatically rotate between them when quota is exhausted.
+
+1. Create additional GCP projects (repeat Steps 1-4 above)
+2. Update your config.toml with [[projects]] array:
+
+    channel_id = 'UCxxxxxxxxxx'
+
+    [[projects]]
+    name = 'main'
+    client_id = 'main-client-id.apps.googleusercontent.com'
+    client_secret = 'GOCSPX-main-secret'
+
+    [[projects]]
+    name = 'backup'
+    client_id = 'backup-client-id.apps.googleusercontent.com'
+    client_secret = 'GOCSPX-backup-secret'
+
+3. Authenticate each project:
+    ytrix projects_auth main
+    ytrix projects_auth backup
+
+4. View project status:
+    ytrix projects
+
+5. Force a specific project:
+    ytrix --project backup plist2mlist PLxxx
+
+Each project has 10,000 API units/day. ytrix tracks usage and
+automatically switches projects when one is exhausted.
 
 VERIFICATION NOTE
 -----------------

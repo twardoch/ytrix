@@ -6,11 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Nothing yet
+
+## [1.2.0] - 2026-01-13
+
+### Added
+
 - **Duration formatting in info output** (Phase 8.1):
   - `format_duration(seconds)` helper function converts seconds to HH:MM:SS or MM:SS
   - `VideoInfo.to_dict()` now includes `duration_formatted` field
   - `PlaylistInfo.to_dict()` now includes `total_duration` (seconds) and `total_duration_formatted`
-  - 10 new tests for duration formatting (321 total tests)
+  - 10 new tests for duration formatting
 - **Playlist info extraction** (Phase 8):
   - `plist2info`: Extract single playlist with video info and subtitles
   - `plists2info`: Batch extraction from text file of playlist URLs
@@ -46,12 +52,12 @@ All notable changes to this project will be documented in this file.
   - Video delay: configurable pause between video processing (default 0.5s)
   - Progress summary: reports success/failure counts at completion
   - `--delay` flag for `plist2info` and `plists2info` commands
-  - 17 new tests for throttling (311 total tests)
+  - 17 new tests for throttling
 
 ### Changed
 
-- Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 321
+- Version is now derived from git tags (e.g., `v1.2.0`)
+- 321 tests with 79% coverage
 - Subtitle downloads now use adaptive throttling with Retry-After awareness and higher retry count
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 - **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists

@@ -212,6 +212,10 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 - [x] Extract full video metadata via yt-dlp
 - [x] Extract available subtitles (manual and automatic)
 - [x] Download subtitle files (SRT, VTT)
+- [x] Add `format_duration()` helper for HH:MM:SS formatting
+- [x] Add `duration_formatted` to VideoInfo.to_dict()
+- [x] Add `total_duration` and `total_duration_formatted` to PlaylistInfo.to_dict()
+- [x] Export `format_duration` from package for external use
 
 ### 8.2 Transcript Conversion
 - [x] Parse SRT format to plain text
@@ -229,10 +233,56 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 - [x] 29 unit tests for info module
 - [x] Live testing with example playlists
 
+## Phase 9: Multi-Project Credential Rotation - MOSTLY COMPLETE
+
+### 9.1 Problem Analysis
+
+YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
+- Batch operations exhaust quota quickly
+- Users must wait until midnight PT for reset
+- No way to distribute load across multiple projects
+
+**Solution**: Support multiple GCP projects with automatic credential rotation.
+
+### 9.2 Multi-Project Configuration - COMPLETE
+
+- [x] Extend config to support `[[projects]]` array in config.toml
+- [x] Each project has: name, client_id, client_secret
+- [x] Backwards compatible: single `[oauth]` section still works
+- [x] Store per-project tokens in ~/.ytrix/tokens/{project_name}.json
+
+### 9.3 Credential Rotation Logic - COMPLETE
+
+- [x] Create `projects.py` module for project management
+- [x] Track quota usage per project (persist to ~/.ytrix/quota_state.json)
+- [x] Auto-rotate to next project when quota exhausted (403 quotaExceeded)
+- [x] Round-robin selection with quota awareness
+- [x] `--project` flag to force specific project
+
+### 9.4 GCP Project Cloning (gcptrix integration)
+
+- [x] Move gcptrix.py into ytrix/gcptrix.py
+- [ ] Add `gcp_clone <source> <suffix>` CLI command
+- [ ] Add `gcp_inventory <project>` CLI command
+- [ ] Document manual steps required after cloning
+
+### 9.5 CLI Commands - MOSTLY COMPLETE
+
+- [x] `projects`: Show configured projects and quota status
+- [ ] `projects_add <name>`: Interactive setup for new project
+- [x] `projects_auth <name>`: Authenticate specific project
+- [x] `projects_select <name>`: Select active project
+
+### 9.6 Documentation - COMPLETE
+
+- [x] SETUP.txt: Add multi-project setup instructions
+- [x] README: Document project rotation
+- [x] Help text: Explain --project flag and rotation behavior
+
 ## Success Criteria
 
 - [x] All 17 commands functional (14 core + plist2info + plists2info + quota_status)
-- [x] Tests pass with 79% coverage (311 tests)
+- [x] Tests pass with 79% coverage (321 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes
@@ -240,3 +290,4 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 - [x] Git-tag-based semantic versioning via hatch-vcs
 - [x] Batch operations complete without 429 errors under normal load
 - [x] Graceful handling of quota limits with clear user guidance
+- [~] Multi-project credential rotation (Phase 9 - core complete, docs pending)

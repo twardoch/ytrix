@@ -11,7 +11,8 @@ from rich.console import Console
 from rich.progress import Progress
 
 from ytrix import __version__, api, cache, extractor, info, quota, yaml_ops
-from ytrix.config import get_config_dir, load_config
+from ytrix.config import Config, get_config_dir, load_config
+from ytrix.projects import get_project_manager, reset_project_manager
 from ytrix.dedup import MatchType, analyze_batch_deduplication, load_target_playlists_with_videos
 from ytrix.journal import (
     Journal,
@@ -38,10 +39,15 @@ class YtrixCLI:
         ytrix --verbose mlists2yaml --details
         ytrix --json-output plist2mlist PLxxx
         ytrix --throttle 500 plists2mlists playlists.txt  # Slower API calls
+        ytrix --project backup plist2mlist PLxxx  # Use specific project
     """
 
     def __init__(
-        self, verbose: bool = False, json_output: bool = False, throttle: int = 200
+        self,
+        verbose: bool = False,
+        json_output: bool = False,
+        throttle: int = 200,
+        project: str | None = None,
     ) -> None:
         """Initialize CLI with options.
 
@@ -49,16 +55,19 @@ class YtrixCLI:
             verbose: Enable debug logging
             json_output: Output results as JSON instead of human-readable text
             throttle: Milliseconds between API write calls (default 200, 0 to disable)
+            project: Force using a specific project for API calls (multi-project setup)
         """
         configure_logging(verbose)
         self._json = json_output
+        self._project = project
         # Set API throttle delay
         api.set_throttle_delay(throttle)
         logger.debug(
-            "ytrix initialized with verbose={}, json={}, throttle={}ms",
+            "ytrix initialized with verbose={}, json={}, throttle={}ms, project={}",
             verbose,
             json_output,
             throttle,
+            project,
         )
 
     def _output(self, data: dict[str, Any]) -> dict[str, Any] | None:
@@ -67,12 +76,23 @@ class YtrixCLI:
             print(json.dumps(data, indent=2))
         return data if self._json else None
 
+    def _get_youtube_client(self, config: Config) -> Any:
+        """Get YouTube API client, optionally using a specific project.
+
+        If --project was specified, selects that project before getting credentials.
+        """
+        if self._project:
+            manager = get_project_manager(config)
+            manager.select_project(self._project)
+            return manager.get_client()
+        return api.get_youtube_client(config)
+
     def version(self) -> None:
         """Show ytrix version."""
         if self._json:
             self._output({"version": __version__})
         else:
-            console.print(f"ytrix {__version__}")
+            console.print(f"ytrix {__version__}", highlight=False)
 
     def config(self) -> dict[str, Any] | None:
         """Show configuration status and setup instructions.
@@ -226,6 +246,120 @@ class YtrixCLI:
 
         return None
 
+    def projects(self) -> dict[str, Any] | None:
+        """Show configured projects and quota status.
+
+        Displays all configured GCP projects, their quota usage,
+        and which project is currently active.
+
+        Example:
+            ytrix projects
+            ytrix --json-output projects
+        """
+        config = load_config()
+        manager = get_project_manager(config)
+
+        summary = manager.status_summary()
+
+        if self._json:
+            return self._output({"projects": summary})
+
+        console.print("[bold]Configured Projects[/bold]")
+        console.print()
+
+        for proj in summary:
+            name = proj["name"]
+            current = proj["current"]
+            used = proj["quota_used"]
+            remaining = proj["quota_remaining"]
+            limit = proj["quota_limit"]
+            exhausted = proj["is_exhausted"]
+
+            marker = "[green]→[/green] " if current else "  "
+            status = "[red](exhausted)[/red]" if exhausted else ""
+
+            console.print(f"{marker}[bold]{name}[/bold] {status}")
+            console.print(f"    Quota: {used:,} / {limit:,} used, {remaining:,} remaining")
+
+        return None
+
+    def projects_auth(self, name: str | None = None) -> dict[str, Any] | None:
+        """Authenticate a project (triggers OAuth flow if needed).
+
+        Args:
+            name: Project name to authenticate (default: current project)
+
+        Example:
+            ytrix projects_auth           # Auth current project
+            ytrix projects_auth backup    # Auth specific project
+        """
+        config = load_config()
+        manager = get_project_manager(config)
+
+        if name:
+            manager.select_project(name)
+
+        project = manager.current_project
+
+        if not self._json:
+            console.print(f"[blue]Authenticating project '{project.name}'...[/blue]")
+
+        try:
+            manager.get_credentials()
+
+            if self._json:
+                return self._output({
+                    "project": project.name,
+                    "authenticated": True,
+                })
+
+            console.print(f"[green]Project '{project.name}' authenticated successfully[/green]")
+
+        except Exception as e:
+            if self._json:
+                return self._output({
+                    "project": project.name,
+                    "authenticated": False,
+                    "error": str(e),
+                })
+            console.print(f"[red]Authentication failed: {e}[/red]")
+
+        return None
+
+    def projects_select(self, name: str) -> dict[str, Any] | None:
+        """Select a project as the active project.
+
+        Args:
+            name: Project name to select
+
+        Example:
+            ytrix projects_select backup
+        """
+        config = load_config()
+        manager = get_project_manager(config)
+
+        try:
+            manager.select_project(name)
+
+            if self._json:
+                return self._output({
+                    "selected": name,
+                    "success": True,
+                })
+
+            console.print(f"[green]Selected project '{name}'[/green]")
+
+        except ValueError as e:
+            if self._json:
+                return self._output({
+                    "selected": name,
+                    "success": False,
+                    "error": str(e),
+                })
+            console.print(f"[red]{e}[/red]")
+
+        return None
+
     def journal_status(
         self, clear: bool = False, pending_only: bool = False
     ) -> dict[str, Any] | None:
@@ -374,7 +508,7 @@ class YtrixCLI:
 
         # List own playlists via YouTube API
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         if not self._json and not urls:
             console.print("[blue]Fetching playlists...[/blue]")
@@ -529,7 +663,7 @@ class YtrixCLI:
                 console.print(f"    ... and {len(source.videos) - 5} more")
             return None
 
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         # Handle partial match - add missing videos to existing playlist
         if match_result and match_result.match_type == MatchType.PARTIAL:
@@ -707,7 +841,7 @@ class YtrixCLI:
             return None
 
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         if not self._json:
             console.print(f"[blue]Creating merged playlist: {playlist_title}[/blue]")
@@ -802,7 +936,7 @@ class YtrixCLI:
             return None
 
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         if not self._json:
             console.print(f"[blue]Creating {len(groups)} playlists...[/blue]")
@@ -992,7 +1126,7 @@ class YtrixCLI:
             return None
 
         # Execute batch operations
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
         source_by_id = {p.id: p for p in source_playlists}
 
         for task in pending_tasks:
@@ -1109,7 +1243,7 @@ class YtrixCLI:
             ytrix mlists2yaml --output my_playlists.yaml --details
         """
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         if not self._json:
             console.print("[blue]Fetching playlists...[/blue]")
@@ -1162,7 +1296,7 @@ class YtrixCLI:
             ytrix yaml2mlists playlists.yaml
         """
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         new_playlists = yaml_ops.load_yaml(file_path)
         if not self._json:
@@ -1273,7 +1407,7 @@ class YtrixCLI:
             ytrix mlist2yaml PLxxx --output mylist.yaml
         """
         config = load_config()
-        client = api.get_youtube_client(config)
+        client = self._get_youtube_client(config)
 
         playlist_id = extract_playlist_id(url_or_id)
 

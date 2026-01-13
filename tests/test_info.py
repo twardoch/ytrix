@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 
 from ytrix import info
@@ -304,7 +303,12 @@ class TestPlaylistInfo:
                     id="v2", title="Video 2", description="", channel="Ch", duration=120, position=1
                 ),
                 info.VideoInfo(
-                    id="v3", title="Video 3", description="", channel="Ch", duration=3600, position=2
+                    id="v3",
+                    title="Video 3",
+                    description="",
+                    channel="Ch",
+                    duration=3600,
+                    position=2,
                 ),
             ],
         )
@@ -406,26 +410,41 @@ class TestExtractPlaylistInfo:
 class TestDownloadSubtitle:
     """Tests for download_subtitle function."""
 
-    def test_returns_none_for_no_url(self) -> None:
+    def test_returns_none_for_no_video_id(self) -> None:
         sub = info.SubtitleInfo(lang="en", source="manual", ext="srt", url=None)
         assert info.download_subtitle(sub) is None
+        assert info.download_subtitle(sub, video_id=None) is None
 
-    @patch("ytrix.info.httpx.Client")
-    def test_downloads_content(self, mock_client_class: MagicMock) -> None:
+    @patch("ytrix.info.YoutubeDL")
+    def test_downloads_content_via_ytdlp(self, mock_ydl_class: MagicMock) -> None:
         throttler = info.Throttler(delay_ms=0)
         original_throttler = info._subtitle_throttler
         info._subtitle_throttler = throttler
-        try:
-            mock_client = MagicMock()
-            mock_client_class.return_value.__enter__.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.text = "1\n00:00:00,000 --> 00:00:02,000\nHello"
-            mock_client.get.return_value = mock_response
 
-            sub = info.SubtitleInfo(
-                lang="en", source="manual", ext="srt", url="https://example.com"
-            )
-            result = info.download_subtitle(sub)
+        # Capture the outtmpl to write subtitle file to the correct temp directory
+        captured_opts: dict = {}
+
+        def capture_opts(opts: dict) -> MagicMock:
+            captured_opts.update(opts)
+            mock_ydl = MagicMock()
+
+            def mock_download(_urls: list[str]) -> None:
+                # Write subtitle file to the temp directory specified in outtmpl
+                tmpdir = Path(captured_opts["outtmpl"]).parent
+                sub_file = tmpdir / "test123.en.srt"
+                sub_file.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello", encoding="utf-8")
+
+            mock_ydl.download.side_effect = mock_download
+            mock_context = MagicMock()
+            mock_context.__enter__ = MagicMock(return_value=mock_ydl)
+            mock_context.__exit__ = MagicMock(return_value=False)
+            return mock_context
+
+        mock_ydl_class.side_effect = capture_opts
+
+        try:
+            sub = info.SubtitleInfo(lang="en", source="manual", ext="srt")
+            result = info.download_subtitle(sub, video_id="test123")
 
             assert result == "1\n00:00:00,000 --> 00:00:02,000\nHello"
         finally:
@@ -433,35 +452,33 @@ class TestDownloadSubtitle:
 
     @patch("ytrix.info.random.uniform", return_value=0)
     @patch("ytrix.info.time.sleep")
-    @patch("ytrix.info.httpx.Client")
-    def test_retries_on_429_with_retry_after(
+    @patch("ytrix.info.YoutubeDL")
+    def test_retries_on_rate_limit_error(
         self,
-        mock_client_class: MagicMock,
+        mock_ydl_class: MagicMock,
         mock_sleep: MagicMock,
-        mock_uniform: MagicMock,
+        _mock_uniform: MagicMock,
     ) -> None:
         throttler = info.Throttler(delay_ms=0)
         original_throttler = info._subtitle_throttler
         info._subtitle_throttler = throttler
+
+        mock_ydl = MagicMock()
+        # Simulate rate limit error
+        mock_ydl.download.side_effect = Exception("HTTP Error 429: Too Many Requests")
+
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_context.__exit__ = MagicMock(return_value=False)
+        mock_ydl_class.return_value = mock_context
+
         try:
-            request = httpx.Request("GET", "https://example.com")
-            response = httpx.Response(429, request=request, headers={"Retry-After": "4"})
-            error = httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
-
-            mock_response = MagicMock()
-            mock_response.raise_for_status.side_effect = error
-            mock_client = MagicMock()
-            mock_client.get.return_value = mock_response
-            mock_client_class.return_value.__enter__.return_value = mock_client
-
-            sub = info.SubtitleInfo(
-                lang="en", source="manual", ext="srt", url="https://example.com"
-            )
-            result = info.download_subtitle(sub, max_retries=2)
+            sub = info.SubtitleInfo(lang="en", source="manual", ext="srt")
+            result = info.download_subtitle(sub, video_id="test123", max_retries=2)
 
             assert result is None
-            assert mock_client.get.call_count == 2
-            assert any(call.args[0] == 4 for call in mock_sleep.call_args_list)
+            assert mock_ydl.download.call_count == 2
+            assert mock_sleep.called  # Should have slept between retries
         finally:
             info._subtitle_throttler = original_throttler
 
@@ -613,19 +630,6 @@ class TestIsRateLimitError:
     def test_ignores_other_errors(self) -> None:
         exc = Exception("Network connection failed")
         assert info._is_rate_limit_error(exc) is False
-
-
-class TestRetryAfterSeconds:
-    """Tests for _retry_after_seconds helper."""
-
-    def test_returns_none_when_missing(self) -> None:
-        assert info._retry_after_seconds(httpx.Headers()) is None
-
-    def test_parses_seconds(self) -> None:
-        assert info._retry_after_seconds(httpx.Headers({"Retry-After": "5"})) == 5
-
-    def test_ignores_invalid_value(self) -> None:
-        assert info._retry_after_seconds(httpx.Headers({"Retry-After": "bad"})) is None
 
 
 class TestSetYtdlpThrottleDelay:

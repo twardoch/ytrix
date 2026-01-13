@@ -14,27 +14,33 @@ def test_version_exported() -> None:
 
 def test_version_fallback_on_import_error() -> None:
     """Falls back to dev version when _version module unavailable."""
+    # Save original module references
+    original_modules = {k: v for k, v in sys.modules.items() if k.startswith("ytrix")}
+
     # Remove ytrix modules from cache to force reimport
-    modules_to_remove = [k for k in sys.modules if k.startswith("ytrix")]
-    for mod in modules_to_remove:
+    for mod in list(original_modules.keys()):
         del sys.modules[mod]
 
-    # Mock _version import to raise ImportError
-    with patch.dict(sys.modules, {"ytrix._version": None}):
-        # Force reimport by reloading
-        import importlib
+    try:
+        # Mock _version import to raise ImportError
+        with patch.dict(sys.modules, {"ytrix._version": None}):
+            # Force reimport by reloading
+            import importlib
 
-        import ytrix
+            import ytrix
 
-        importlib.reload(ytrix)
+            importlib.reload(ytrix)
 
-        # Should fall back to dev version
-        assert ytrix.__version__ == "0.0.0.dev0"
+            # Should fall back to dev version
+            assert ytrix.__version__ == "0.0.0.dev0"
+    finally:
+        # Clean up any newly imported modules
+        for mod in list(sys.modules.keys()):
+            if mod.startswith("ytrix"):
+                del sys.modules[mod]
 
-    # Restore normal state
-    for mod in modules_to_remove:
-        if mod in sys.modules:
-            del sys.modules[mod]
+        # Restore original modules to maintain consistent state
+        sys.modules.update(original_modules)
 
 
 def test_models_exported() -> None:
@@ -53,3 +59,13 @@ def test_models_exported() -> None:
         raise InvalidPlaylistError("test error")
     except InvalidPlaylistError as e:
         assert "test error" in str(e)
+
+
+def test_format_duration_exported() -> None:
+    """Package exports format_duration utility."""
+    from ytrix import format_duration
+
+    # Basic formatting
+    assert format_duration(0) == "0:00"
+    assert format_duration(65) == "1:05"
+    assert format_duration(3661) == "1:01:01"

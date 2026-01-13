@@ -22,6 +22,7 @@ htmlcov/
 
 # Vendored dependencies (install via pip)
 external/
+example/ 
 
 # Development files (not for distribution)
 CLAUDE.md
