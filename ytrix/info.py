@@ -8,7 +8,9 @@ This module extracts comprehensive info from YouTube playlists including:
 
 from __future__ import annotations
 
+import random
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +22,87 @@ from yt_dlp import YoutubeDL
 
 from ytrix.logging import logger
 from ytrix.models import extract_playlist_id
+
+# --- Rate limiting and retry logic ---
+
+
+class Throttler:
+    """Enforces minimum delay between yt-dlp operations with adaptive backoff.
+
+    Helps avoid 429 RATE_LIMIT_EXCEEDED errors by pacing requests.
+    Automatically increases delay when errors occur.
+    """
+
+    def __init__(self, delay_ms: int = 500) -> None:
+        """Initialize throttler.
+
+        Args:
+            delay_ms: Minimum milliseconds between calls (default: 500ms)
+        """
+        self._delay_ms = delay_ms
+        self._base_delay_ms = delay_ms
+        self._last_call: float = 0.0
+        self._consecutive_errors: int = 0
+
+    @property
+    def delay_ms(self) -> int:
+        """Current delay in milliseconds."""
+        return self._delay_ms
+
+    def wait(self) -> None:
+        """Wait if needed to maintain minimum delay between calls."""
+        if self._delay_ms <= 0:
+            return
+
+        now = time.monotonic()
+        elapsed_ms = (now - self._last_call) * 1000
+
+        if elapsed_ms < self._delay_ms:
+            sleep_ms = self._delay_ms - elapsed_ms
+            # Add small jitter to avoid thundering herd
+            jitter = random.uniform(0, sleep_ms * 0.1)
+            time.sleep((sleep_ms + jitter) / 1000)
+
+        self._last_call = time.monotonic()
+
+    def on_success(self) -> None:
+        """Called after successful request - gradually reduce delay."""
+        self._consecutive_errors = 0
+        if self._delay_ms > self._base_delay_ms:
+            self._delay_ms = max(self._base_delay_ms, int(self._delay_ms * 0.9))
+
+    def on_error(self, is_rate_limit: bool = False) -> None:
+        """Called after error - increase delay with exponential backoff."""
+        self._consecutive_errors += 1
+        if is_rate_limit:
+            # Rate limit: aggressive backoff
+            self._delay_ms = min(30000, self._delay_ms * 2 + 1000)
+            logger.warning("Rate limit hit, throttle delay now {}ms", self._delay_ms)
+        else:
+            # Other error: modest increase
+            self._delay_ms = min(10000, int(self._delay_ms * 1.5))
+
+    def get_retry_delay(self, attempt: int) -> float:
+        """Get delay before retry attempt (exponential backoff with jitter)."""
+        base = min(60, 2**attempt)  # 2, 4, 8, 16, 32, 60s
+        jitter = random.uniform(0, base * 0.5)
+        return base + jitter
+
+
+# Global throttler for yt-dlp operations
+_ytdlp_throttler = Throttler(delay_ms=500)
+
+
+def set_ytdlp_throttle_delay(delay_ms: int) -> None:
+    """Set the throttle delay for yt-dlp operations."""
+    _ytdlp_throttler._delay_ms = delay_ms
+    _ytdlp_throttler._base_delay_ms = delay_ms
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Check if exception indicates a rate limit error."""
+    msg = str(exc).lower()
+    return "429" in msg or "rate" in msg or "too many" in msg
 
 
 @dataclass
@@ -109,28 +192,55 @@ def _video_filename(position: int, title: str) -> str:
     return f"{position + 1:03d}_{safe_title}"
 
 
-def extract_video_info(video_id: str) -> VideoInfo:
+def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
     """Extract full video metadata including available subtitles.
 
     Args:
         video_id: YouTube video ID
+        max_retries: Maximum retry attempts on rate limit errors
 
     Returns:
         VideoInfo with all available metadata and subtitle info
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    with YoutubeDL(
-        {  # type: ignore[arg-type]
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "writesubtitles": False,
-            "writeautomaticsub": False,
-        }
-    ) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if info is None:
-            raise RuntimeError(f"yt-dlp returned no info for {video_id}")
+    info = None
+
+    for attempt in range(max_retries):
+        _ytdlp_throttler.wait()
+        try:
+            with YoutubeDL(
+                {  # type: ignore[arg-type]
+                    "quiet": True,
+                    "no_warnings": True,
+                    "skip_download": True,
+                    "writesubtitles": False,
+                    "writeautomaticsub": False,
+                }
+            ) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info is None:
+                    raise RuntimeError(f"yt-dlp returned no info for {video_id}")
+            _ytdlp_throttler.on_success()
+            break
+        except Exception as e:
+            is_rate_limit = _is_rate_limit_error(e)
+            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)
+
+            if attempt < max_retries - 1 and is_rate_limit:
+                delay = _ytdlp_throttler.get_retry_delay(attempt)
+                logger.warning(
+                    "Rate limit on video {}, retry {}/{} in {:.1f}s",
+                    video_id,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+    if info is None:
+        raise RuntimeError(f"Failed to extract info for {video_id} after {max_retries} attempts")
 
     # Collect subtitle info
     subtitles: list[SubtitleInfo] = []
@@ -177,29 +287,55 @@ def extract_video_info(video_id: str) -> VideoInfo:
     )
 
 
-def extract_playlist_info(url_or_id: str) -> PlaylistInfo:
+def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
     """Extract full playlist metadata (without full video details yet).
 
     Args:
         url_or_id: Playlist URL or ID
+        max_retries: Maximum retry attempts on rate limit errors
 
     Returns:
         PlaylistInfo with basic video list
     """
     playlist_id = extract_playlist_id(url_or_id)
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
+    data = None
 
-    with YoutubeDL(
-        {  # type: ignore[arg-type]
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": True,
-            "skip_download": True,
-        }
-    ) as ydl:
-        data = ydl.extract_info(url, download=False)
-        if data is None:
-            raise RuntimeError(f"yt-dlp returned no info for {playlist_id}")
+    for attempt in range(max_retries):
+        _ytdlp_throttler.wait()
+        try:
+            with YoutubeDL(
+                {  # type: ignore[arg-type]
+                    "quiet": True,
+                    "no_warnings": True,
+                    "extract_flat": True,
+                    "skip_download": True,
+                }
+            ) as ydl:
+                data = ydl.extract_info(url, download=False)
+                if data is None:
+                    raise RuntimeError(f"yt-dlp returned no info for {playlist_id}")
+            _ytdlp_throttler.on_success()
+            break
+        except Exception as e:
+            is_rate_limit = _is_rate_limit_error(e)
+            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)
+
+            if attempt < max_retries - 1 and is_rate_limit:
+                delay = _ytdlp_throttler.get_retry_delay(attempt)
+                logger.warning(
+                    "Rate limit on playlist {}, retry {}/{} in {:.1f}s",
+                    playlist_id,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+    if data is None:
+        raise RuntimeError(f"Failed to extract info for {playlist_id} after {max_retries} attempts")
 
     videos = []
     for i, entry in enumerate(data.get("entries", [])):
@@ -226,11 +362,12 @@ def extract_playlist_info(url_or_id: str) -> PlaylistInfo:
     )
 
 
-def download_subtitle(sub: SubtitleInfo) -> str | None:
-    """Download subtitle content from URL.
+def download_subtitle(sub: SubtitleInfo, max_retries: int = 3) -> str | None:
+    """Download subtitle content from URL with retry logic.
 
     Args:
         sub: SubtitleInfo with URL
+        max_retries: Maximum retry attempts on rate limit errors
 
     Returns:
         Subtitle file content as string, or None if failed
@@ -238,14 +375,29 @@ def download_subtitle(sub: SubtitleInfo) -> str | None:
     if not sub.url:
         return None
 
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(sub.url)
-            response.raise_for_status()
-            return response.text
-    except Exception as e:
-        logger.warning("Failed to download subtitle: {}", e)
-        return None
+    for attempt in range(max_retries):
+        try:
+            # Small delay between subtitle downloads to be gentle
+            time.sleep(0.2 + random.uniform(0, 0.1))
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(sub.url)
+                response.raise_for_status()
+                return response.text
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                delay = 2**attempt + random.uniform(0, 1)
+                if attempt < max_retries - 1:
+                    logger.debug("Subtitle rate limit, retry in {:.1f}s", delay)
+                    time.sleep(delay)
+                    continue
+            logger.warning("Failed to download subtitle: {}", e)
+            return None
+        except Exception as e:
+            logger.warning("Failed to download subtitle: {}", e)
+            return None
+
+    return None
 
 
 def srt_to_transcript(srt_content: str) -> str:
@@ -421,6 +573,7 @@ def extract_and_save_playlist_info(
     output_dir: Path | str,
     max_languages: int = 5,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    video_delay: float = 0.5,
 ) -> PlaylistInfo:
     """Extract full playlist info and save to output directory.
 
@@ -436,6 +589,7 @@ def extract_and_save_playlist_info(
         output_dir: Base output directory
         max_languages: Maximum number of language tracks to download per video
         progress_callback: Optional callback(video_index, total_videos, video_title)
+        video_delay: Minimum seconds between processing videos (default: 0.5)
 
     Returns:
         PlaylistInfo with all extracted data
@@ -451,6 +605,7 @@ def extract_and_save_playlist_info(
     playlist_folder.mkdir(parents=True, exist_ok=True)
 
     total_videos = len(playlist.videos)
+    failed_videos: list[str] = []
     logger.info("Processing {} videos...", total_videos)
 
     for i, video in enumerate(playlist.videos):
@@ -458,6 +613,10 @@ def extract_and_save_playlist_info(
             progress_callback(i, total_videos, video.title)
 
         logger.debug("Processing video {}/{}: {}", i + 1, total_videos, video.title)
+
+        # Add delay between videos to be gentle
+        if i > 0 and video_delay > 0:
+            time.sleep(video_delay + random.uniform(0, video_delay * 0.2))
 
         try:
             # Get full video info including subtitles
@@ -507,7 +666,12 @@ def extract_and_save_playlist_info(
                 logger.debug("Saved {} subtitle and transcript", sub.lang)
 
         except Exception as e:
-            logger.warning("Failed to process video {}: {}", video.id, e)
+            failed_videos.append(video.id)
+            is_rate_limit = _is_rate_limit_error(e)
+            if is_rate_limit:
+                logger.warning("Rate limit on video {}, skipping (try again later)", video.id)
+            else:
+                logger.warning("Failed to process video {}: {}", video.id, e)
             continue
 
     # Save playlist.yaml
@@ -515,5 +679,13 @@ def extract_and_save_playlist_info(
     with open(playlist_yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(playlist.to_dict(), f, default_flow_style=False, allow_unicode=True, width=120)
 
+    # Report summary
+    success_count = total_videos - len(failed_videos)
     logger.info("Saved playlist info to {}", playlist_folder)
+    logger.info("Processed {}/{} videos successfully", success_count, total_videos)
+    if failed_videos:
+        logger.warning("Failed videos ({}): {}", len(failed_videos), ", ".join(failed_videos[:5]))
+        if len(failed_videos) > 5:
+            logger.warning("... and {} more", len(failed_videos) - 5)
+
     return playlist
