@@ -2,7 +2,8 @@
 
 import json
 import time
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
@@ -14,10 +15,12 @@ from ytrix.api import (
     _is_retryable_error,
     add_video_to_playlist,
     create_playlist,
+    get_credentials,
     get_playlist_items,
     get_playlist_videos,
     get_playlist_with_videos,
     get_throttle_delay,
+    get_youtube_client,
     list_my_playlists,
     remove_video_from_playlist,
     reorder_playlist_videos,
@@ -481,3 +484,161 @@ class TestUpdatePlaylistFields:
         call_args = mock_client.playlists().update.call_args
         body = call_args.kwargs.get("body", call_args[1].get("body", {}))
         assert body["status"]["privacyStatus"] == "private"
+
+
+class TestGetCredentials:
+    """Tests for get_credentials function."""
+
+    def test_loads_credentials_from_token_file(self, tmp_path: Path) -> None:
+        """Loads credentials from existing token file."""
+        from ytrix.config import Config, OAuthConfig
+
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id1", client_secret="s1"),
+        )
+        token_path = tmp_path / "token.json"
+        token_path.write_text('{"token": "test", "refresh_token": "rt"}')
+
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+
+        with (
+            patch("ytrix.api.get_token_path", return_value=token_path),
+            patch(
+                "ytrix.api.Credentials.from_authorized_user_info",
+                return_value=mock_creds,
+            ),
+        ):
+            result = get_credentials(config)
+            assert result is mock_creds
+
+    def test_refreshes_expired_credentials(self, tmp_path: Path) -> None:
+        """Refreshes credentials when expired."""
+        from ytrix.config import Config, OAuthConfig
+
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id1", client_secret="s1"),
+        )
+        token_path = tmp_path / "token.json"
+        token_path.write_text('{"token": "test", "refresh_token": "rt"}')
+
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "rt"
+        mock_creds.to_json.return_value = '{"token": "new"}'
+
+        mock_request = MagicMock()
+
+        with (
+            patch("ytrix.api.get_token_path", return_value=token_path),
+            patch(
+                "ytrix.api.Credentials.from_authorized_user_info",
+                return_value=mock_creds,
+            ),
+            patch("google.auth.transport.requests.Request", return_value=mock_request),
+        ):
+            result = get_credentials(config)
+            mock_creds.refresh.assert_called_once_with(mock_request)
+            assert result is mock_creds
+
+    def test_raises_on_missing_oauth_config(self, tmp_path: Path) -> None:
+        """Raises ValueError when oauth config is missing."""
+        from ytrix.config import Config
+
+        config = Config(channel_id="UC123")  # No oauth
+        token_path = tmp_path / "token.json"
+        # No token file exists
+
+        with (
+            patch("ytrix.api.get_token_path", return_value=token_path),
+            pytest.raises(ValueError, match="No OAuth credentials configured"),
+        ):
+            get_credentials(config)
+
+
+class TestGetYoutubeClient:
+    """Tests for get_youtube_client function."""
+
+    def test_builds_client_with_credentials(self, tmp_path: Path) -> None:
+        """Builds YouTube client with credentials."""
+        from ytrix.config import Config, OAuthConfig
+
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        mock_creds = MagicMock()
+        mock_client = MagicMock()
+
+        with (
+            patch("ytrix.api.get_credentials", return_value=mock_creds),
+            patch("ytrix.api.build", return_value=mock_client) as mock_build,
+        ):
+            result = get_youtube_client(config)
+            mock_build.assert_called_once_with("youtube", "v3", credentials=mock_creds)
+            assert result is mock_client
+
+
+class TestReorderPositionLogic:
+    """Tests for reorder_playlist_videos position shifting logic."""
+
+    def test_reorder_moves_item_backward(self, mock_client: MagicMock) -> None:
+        """Moving item to earlier position shifts other items forward."""
+        # Setup: 3 items at positions 0, 1, 2
+        mock_items = [
+            PlaylistItem(item_id="item0", video_id="vid0", title="V0", channel="C", position=0),
+            PlaylistItem(item_id="item1", video_id="vid1", title="V1", channel="C", position=1),
+            PlaylistItem(item_id="item2", video_id="vid2", title="V2", channel="C", position=2),
+        ]
+        mock_client.playlistItems().list().execute.return_value = {
+            "items": [
+                {
+                    "id": item.item_id,
+                    "snippet": {
+                        "resourceId": {"videoId": item.video_id},
+                        "title": item.title,
+                        "videoOwnerChannelTitle": item.channel,
+                    },
+                }
+                for item in mock_items
+            ]
+        }
+
+        # Move vid2 to position 0 (backward move)
+        new_order = ["vid2", "vid0", "vid1"]
+        reorder_playlist_videos(mock_client, "PL123", new_order)
+
+        # Should have called update for vid2 moving to position 0
+        mock_client.playlistItems().update.assert_called()
+
+    def test_reorder_moves_item_forward(self, mock_client: MagicMock) -> None:
+        """Moving item to later position shifts other items backward."""
+        # Setup: 3 items at positions 0, 1, 2
+        mock_items = [
+            PlaylistItem(item_id="item0", video_id="vid0", title="V0", channel="C", position=0),
+            PlaylistItem(item_id="item1", video_id="vid1", title="V1", channel="C", position=1),
+            PlaylistItem(item_id="item2", video_id="vid2", title="V2", channel="C", position=2),
+        ]
+        mock_client.playlistItems().list().execute.return_value = {
+            "items": [
+                {
+                    "id": item.item_id,
+                    "snippet": {
+                        "resourceId": {"videoId": item.video_id},
+                        "title": item.title,
+                        "videoOwnerChannelTitle": item.channel,
+                    },
+                }
+                for item in mock_items
+            ]
+        }
+
+        # Move vid0 to position 2 (forward move)
+        new_order = ["vid1", "vid2", "vid0"]
+        reorder_playlist_videos(mock_client, "PL123", new_order)
+
+        # Should have called update
+        mock_client.playlistItems().update.assert_called()
