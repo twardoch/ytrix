@@ -533,6 +533,82 @@ class TestPlist2mlistFlags:
         assert parsed["privacy"] == "unlisted"
 
 
+class TestPlists2mlistFlags:
+    """Tests for plists2mlist --privacy flag."""
+
+    def test_privacy_dry_run(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """--privacy flag shows in dry run."""
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLtest\n")
+
+        playlist = Playlist(
+            id="PLtest",
+            title="Test",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=playlist):
+            cli.plists2mlist(str(input_file), dry_run=True, privacy="unlisted")
+
+        captured = capsys.readouterr()
+        assert "Privacy: unlisted" in captured.out
+
+    def test_privacy_json_dry_run(self, cli_json: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """--privacy flag with JSON output in dry run."""
+        import json as json_mod
+
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLtest\n")
+
+        playlist = Playlist(
+            id="PLtest",
+            title="Test",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=playlist):
+            cli_json.plists2mlist(str(input_file), dry_run=True, privacy="private")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["privacy"] == "private"
+
+    def test_invalid_privacy_raises(self, cli: YtrixCLI, tmp_path: Path) -> None:
+        """Invalid --privacy value raises ValueError."""
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLtest\n")
+
+        with pytest.raises(ValueError, match="--privacy must be"):
+            cli.plists2mlist(str(input_file), privacy="invalid")
+
+    def test_privacy_used_in_create(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """--privacy is passed to create_playlist."""
+        input_file = tmp_path / "playlists.txt"
+        input_file.write_text("PLtest\n")
+
+        playlist = Playlist(
+            id="PLtest",
+            title="Test",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=playlist),
+            patch("ytrix.__main__.api.create_playlist", return_value="PLnew") as mock_create,
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            cli_json.plists2mlist(str(input_file), title="Merged", privacy="unlisted")
+
+        # Verify create_playlist was called with privacy
+        mock_create.assert_called_once()
+        call_args = mock_create.call_args
+        assert call_args.kwargs.get("privacy") == "unlisted"
+
+
 class TestPlists2mlist:
     """Tests for plists2mlist command."""
 
@@ -867,18 +943,29 @@ class TestMlist2yaml:
     def test_exports_single_playlist(
         self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
     ) -> None:
-        """Exports single playlist to YAML."""
-        playlist = Playlist(
+        """Exports single playlist to YAML using yt-dlp for videos."""
+        videos = [Video(id="v1", title="V1", channel="Ch", position=0)]
+        extracted_playlist = Playlist(
             id="PLsingle",
             title="Single Playlist",
-            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+            videos=videos,
         )
         output_path = tmp_path / "single.yaml"
+
+        # Mock the API metadata response
+        mock_client.playlists.return_value.list.return_value.execute.return_value = {
+            "items": [
+                {
+                    "snippet": {"title": "Single Playlist", "description": "Test desc"},
+                    "status": {"privacyStatus": "public"},
+                }
+            ]
+        }
 
         with (
             patch("ytrix.__main__.load_config", return_value=mock_config),
             patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
-            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=playlist),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=extracted_playlist),
         ):
             result = cli.mlist2yaml("PLsingle", output=str(output_path))
 
@@ -892,16 +979,27 @@ class TestMlist2yaml:
         """JSON output returns playlist data."""
         import json as json_mod
 
-        playlist = Playlist(
+        videos = [Video(id="v1", title="V1", channel="Ch", position=0)]
+        extracted_playlist = Playlist(
             id="PLsingle",
             title="Single Playlist",
-            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+            videos=videos,
         )
+
+        # Mock the API metadata response
+        mock_client.playlists.return_value.list.return_value.execute.return_value = {
+            "items": [
+                {
+                    "snippet": {"title": "Single Playlist", "description": ""},
+                    "status": {"privacyStatus": "public"},
+                }
+            ]
+        }
 
         with (
             patch("ytrix.__main__.load_config", return_value=mock_config),
             patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
-            patch("ytrix.__main__.api.get_playlist_with_videos", return_value=playlist),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=extracted_playlist),
         ):
             cli_json.mlist2yaml("PLsingle")
 
@@ -910,6 +1008,37 @@ class TestMlist2yaml:
         assert parsed["playlist"]["id"] == "PLsingle"
         assert parsed["playlist"]["title"] == "Single Playlist"
         assert len(parsed["playlist"]["videos"]) == 1
+
+    def test_falls_back_to_api_for_private_playlist(
+        self, cli: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """Falls back to API when yt-dlp fails (e.g., private playlist)."""
+        videos = [Video(id="v1", title="V1", channel="Ch", position=0)]
+        output_path = tmp_path / "private.yaml"
+
+        # Mock the API metadata response
+        mock_client.playlists.return_value.list.return_value.execute.return_value = {
+            "items": [
+                {
+                    "snippet": {"title": "Private Playlist", "description": ""},
+                    "status": {"privacyStatus": "private"},
+                }
+            ]
+        }
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", side_effect=Exception("Private")),
+            patch("ytrix.__main__.api.get_playlist_videos", return_value=videos),
+        ):
+            result = cli.mlist2yaml("PLprivate", output=str(output_path))
+
+        assert result == str(output_path)
+        assert output_path.exists()
+        content = output_path.read_text()
+        assert "PLprivate" in content
+        assert "private" in content
 
 
 class TestYaml2mlist:

@@ -15,12 +15,17 @@ All notable changes to this project will be documented in this file.
 - Git-tag-based semantic versioning via hatch-vcs
 - `plist2mlist --title` flag for custom playlist titles
 - `plist2mlist --privacy` flag (public, unlisted, private)
+- `plists2mlist --privacy` flag (public, unlisted, private)
 
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 223 (79% coverage)
+- Updated test count to 228
 - Added type ignore comments for tenacity decorators (mypy compatibility)
+- **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists
+  - `ls --count`: Uses yt-dlp for video counts (saves ~1 quota unit per playlist)
+  - `mlists2yaml --details`: Uses yt-dlp for video lists
+  - `mlist2yaml`: Uses yt-dlp for video lists, API only for metadata (privacy status)
 
 ## [1.0.0] - 2026-01-12
 

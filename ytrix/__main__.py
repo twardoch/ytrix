@@ -24,7 +24,7 @@ from ytrix.journal import (
     update_task,
 )
 from ytrix.logging import configure_logging, logger
-from ytrix.models import extract_playlist_id
+from ytrix.models import Playlist, extract_playlist_id
 from ytrix.quota import QuotaEstimate, format_quota_warning
 
 console = Console()
@@ -331,14 +331,19 @@ class YtrixCLI:
                 print(f"https://youtube.com/playlist?list={p.id}")
             return None
 
-        # Fetch video counts if requested
+        # Fetch video counts if requested (uses yt-dlp to avoid API quota)
         video_counts: dict[str, int] = {}
         if count and playlists:
             if not self._json:
                 console.print("[blue]Fetching video counts...[/blue]")
             for p in playlists:
-                videos = api.get_playlist_videos(client, p.id)
-                video_counts[p.id] = len(videos)
+                try:
+                    # Try yt-dlp first (no API quota)
+                    video_counts[p.id] = extractor.get_video_count(p.id)
+                except Exception:
+                    # Fall back to API for private playlists
+                    videos = api.get_playlist_videos(client, p.id)
+                    video_counts[p.id] = len(videos)
 
         if self._json:
             playlist_data = []
@@ -560,7 +565,11 @@ class YtrixCLI:
         )
 
     def plists2mlist(
-        self, file_path: str, title: str | None = None, dry_run: bool = False
+        self,
+        file_path: str,
+        title: str | None = None,
+        dry_run: bool = False,
+        privacy: str = "public",
     ) -> str | dict[str, Any] | None:
         """Merge multiple playlists into one on your channel.
 
@@ -568,11 +577,15 @@ class YtrixCLI:
             file_path: Text file with playlist URLs/IDs (one per line)
             title: Optional title for the merged playlist
             dry_run: Show what would be created without making changes
+            privacy: Privacy setting: public, unlisted, or private (default: public)
 
         Example:
             ytrix plists2mlist playlists.txt
             ytrix plists2mlist playlists.txt --title "My Collection"
+            ytrix plists2mlist playlists.txt --privacy unlisted
         """
+        if privacy not in ("public", "unlisted", "private"):
+            raise ValueError("--privacy must be 'public', 'unlisted', or 'private'")
         # Read playlist URLs/IDs from file
         lines = Path(file_path).read_text().strip().split("\n")
         lines = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
@@ -622,6 +635,7 @@ class YtrixCLI:
                     {
                         "dry_run": True,
                         "title": playlist_title,
+                        "privacy": privacy,
                         "source_playlists": source_playlists,
                         "unique_videos": len(unique_videos),
                         "duplicates_skipped": len(duplicates),
@@ -629,6 +643,7 @@ class YtrixCLI:
                 )
             console.print("[yellow]Dry run - would create:[/yellow]")
             console.print(f"  Title: {playlist_title}")
+            console.print(f"  Privacy: {privacy}")
             console.print(f"  Unique videos: {len(unique_videos)}")
             if duplicates:
                 console.print(f"  Duplicates skipped: {len(duplicates)}")
@@ -640,7 +655,7 @@ class YtrixCLI:
 
         if not self._json:
             console.print(f"[blue]Creating merged playlist: {playlist_title}[/blue]")
-        new_id = api.create_playlist(client, playlist_title)
+        new_id = api.create_playlist(client, playlist_title, privacy=privacy)
 
         added = 0
         if self._json:
@@ -671,6 +686,7 @@ class YtrixCLI:
                 "playlist_id": new_id,
                 "url": url,
                 "title": playlist_title,
+                "privacy": privacy,
                 "videos_added": added,
                 "duplicates_skipped": len(duplicates),
             }
@@ -1046,14 +1062,23 @@ class YtrixCLI:
             console.print(f"Found {len(playlists)} playlists")
 
         if details:
+            # Use yt-dlp to avoid API quota, fall back to API for private playlists
             if self._json:
                 for playlist in playlists:
-                    playlist.videos = api.get_playlist_videos(client, playlist.id)
+                    try:
+                        extracted = extractor.extract_playlist(playlist.id)
+                        playlist.videos = extracted.videos
+                    except Exception:
+                        playlist.videos = api.get_playlist_videos(client, playlist.id)
             else:
                 with Progress(console=console) as progress:
                     task = progress.add_task("Fetching video details...", total=len(playlists))
                     for playlist in playlists:
-                        playlist.videos = api.get_playlist_videos(client, playlist.id)
+                        try:
+                            extracted = extractor.extract_playlist(playlist.id)
+                            playlist.videos = extracted.videos
+                        except Exception:
+                            playlist.videos = api.get_playlist_videos(client, playlist.id)
                         progress.advance(task)
 
         # With --json-output, print JSON and skip file
@@ -1195,7 +1220,27 @@ class YtrixCLI:
         client = api.get_youtube_client(config)
 
         playlist_id = extract_playlist_id(url_or_id)
-        playlist = api.get_playlist_with_videos(client, playlist_id)
+
+        # Get playlist metadata from API (need privacy status)
+        response = client.playlists().list(part="snippet,status", id=playlist_id).execute()
+        if not response["items"]:
+            raise ValueError(f"Playlist not found: {playlist_id}")
+        item = response["items"][0]
+
+        # Try yt-dlp for videos (no API quota), fall back to API for private playlists
+        try:
+            extracted = extractor.extract_playlist(playlist_id)
+            videos = extracted.videos
+        except Exception:
+            videos = api.get_playlist_videos(client, playlist_id)
+
+        playlist = Playlist(
+            id=playlist_id,
+            title=item["snippet"]["title"],
+            description=item["snippet"].get("description", ""),
+            privacy=item["status"]["privacyStatus"],
+            videos=videos,
+        )
 
         if self._json:
             return self._output({"playlist": playlist.to_dict(include_videos=True)})
