@@ -91,6 +91,7 @@ class Throttler:
 
 # Global throttler for yt-dlp operations
 _ytdlp_throttler = Throttler(delay_ms=500)
+_subtitle_throttler = Throttler(delay_ms=200)
 
 
 def set_ytdlp_throttle_delay(delay_ms: int) -> None:
@@ -103,6 +104,20 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
     """Check if exception indicates a rate limit error."""
     msg = str(exc).lower()
     return "429" in msg or "rate" in msg or "too many" in msg
+
+
+def _retry_after_seconds(headers: httpx.Headers) -> float | None:
+    """Parse Retry-After header value in seconds, if present."""
+    value = headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return seconds
 
 
 @dataclass
@@ -384,7 +399,7 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
     )
 
 
-def download_subtitle(sub: SubtitleInfo, max_retries: int = 3) -> str | None:
+def download_subtitle(sub: SubtitleInfo, max_retries: int = 5) -> str | None:
     """Download subtitle content from URL with retry logic.
 
     Args:
@@ -397,27 +412,29 @@ def download_subtitle(sub: SubtitleInfo, max_retries: int = 3) -> str | None:
     if not sub.url:
         return None
 
-    for attempt in range(max_retries):
-        try:
-            # Small delay between subtitle downloads to be gentle
-            time.sleep(0.2 + random.uniform(0, 0.1))
-
-            with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=30.0) as client:
+        for attempt in range(max_retries):
+            _subtitle_throttler.wait()
+            try:
                 response = client.get(sub.url)
                 response.raise_for_status()
+                _subtitle_throttler.on_success()
                 return response.text
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                delay = 2**attempt + random.uniform(0, 1)
-                if attempt < max_retries - 1:
+            except httpx.HTTPStatusError as e:
+                is_rate_limit = e.response.status_code == 429
+                _subtitle_throttler.on_error(is_rate_limit=is_rate_limit)
+                if is_rate_limit and attempt < max_retries - 1:
+                    retry_after = _retry_after_seconds(e.response.headers)
+                    delay = max(_subtitle_throttler.get_retry_delay(attempt), retry_after or 0)
                     logger.debug("Subtitle rate limit, retry in {:.1f}s", delay)
                     time.sleep(delay)
                     continue
-            logger.warning("Failed to download subtitle: {}", e)
-            return None
-        except Exception as e:
-            logger.warning("Failed to download subtitle: {}", e)
-            return None
+                logger.warning("Failed to download subtitle: {}", e)
+                return None
+            except Exception as e:
+                _subtitle_throttler.on_error(is_rate_limit=False)
+                logger.warning("Failed to download subtitle: {}", e)
+                return None
 
     return None
 

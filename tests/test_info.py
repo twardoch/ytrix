@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from ytrix import info
@@ -411,16 +412,58 @@ class TestDownloadSubtitle:
 
     @patch("ytrix.info.httpx.Client")
     def test_downloads_content(self, mock_client_class: MagicMock) -> None:
-        mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.text = "1\n00:00:00,000 --> 00:00:02,000\nHello"
-        mock_client.get.return_value = mock_response
+        throttler = info.Throttler(delay_ms=0)
+        original_throttler = info._subtitle_throttler
+        info._subtitle_throttler = throttler
+        try:
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.text = "1\n00:00:00,000 --> 00:00:02,000\nHello"
+            mock_client.get.return_value = mock_response
 
-        sub = info.SubtitleInfo(lang="en", source="manual", ext="srt", url="https://example.com")
-        result = info.download_subtitle(sub)
+            sub = info.SubtitleInfo(
+                lang="en", source="manual", ext="srt", url="https://example.com"
+            )
+            result = info.download_subtitle(sub)
 
-        assert result == "1\n00:00:00,000 --> 00:00:02,000\nHello"
+            assert result == "1\n00:00:00,000 --> 00:00:02,000\nHello"
+        finally:
+            info._subtitle_throttler = original_throttler
+
+    @patch("ytrix.info.random.uniform", return_value=0)
+    @patch("ytrix.info.time.sleep")
+    @patch("ytrix.info.httpx.Client")
+    def test_retries_on_429_with_retry_after(
+        self,
+        mock_client_class: MagicMock,
+        mock_sleep: MagicMock,
+        mock_uniform: MagicMock,
+    ) -> None:
+        throttler = info.Throttler(delay_ms=0)
+        original_throttler = info._subtitle_throttler
+        info._subtitle_throttler = throttler
+        try:
+            request = httpx.Request("GET", "https://example.com")
+            response = httpx.Response(429, request=request, headers={"Retry-After": "4"})
+            error = httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+
+            mock_response = MagicMock()
+            mock_response.raise_for_status.side_effect = error
+            mock_client = MagicMock()
+            mock_client.get.return_value = mock_response
+            mock_client_class.return_value.__enter__.return_value = mock_client
+
+            sub = info.SubtitleInfo(
+                lang="en", source="manual", ext="srt", url="https://example.com"
+            )
+            result = info.download_subtitle(sub, max_retries=2)
+
+            assert result is None
+            assert mock_client.get.call_count == 2
+            assert any(call.args[0] == 4 for call in mock_sleep.call_args_list)
+        finally:
+            info._subtitle_throttler = original_throttler
 
 
 class TestExtractAndSavePlaylistInfo:
@@ -570,6 +613,19 @@ class TestIsRateLimitError:
     def test_ignores_other_errors(self) -> None:
         exc = Exception("Network connection failed")
         assert info._is_rate_limit_error(exc) is False
+
+
+class TestRetryAfterSeconds:
+    """Tests for _retry_after_seconds helper."""
+
+    def test_returns_none_when_missing(self) -> None:
+        assert info._retry_after_seconds(httpx.Headers()) is None
+
+    def test_parses_seconds(self) -> None:
+        assert info._retry_after_seconds(httpx.Headers({"Retry-After": "5"})) == 5
+
+    def test_ignores_invalid_value(self) -> None:
+        assert info._retry_after_seconds(httpx.Headers({"Retry-After": "bad"})) is None
 
 
 class TestSetYtdlpThrottleDelay:
