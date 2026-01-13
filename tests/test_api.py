@@ -421,3 +421,63 @@ class TestErrorHandling:
         """400 client errors are not retryable."""
         error = self._make_http_error(400, "badRequest")
         assert _is_retryable_error(error) is False
+
+    def test_quota_exceeded_with_malformed_json(self) -> None:
+        """Handles malformed JSON in error response gracefully."""
+        resp = MagicMock()
+        resp.status = 403
+        # Invalid JSON that will cause JSONDecodeError
+        content = b"not valid json {{"
+        error = HttpError(resp, content, uri="https://api.example.com")
+        # Should return False, not raise
+        assert _is_quota_exceeded(error) is False
+
+    def test_quota_exceeded_with_missing_error_key(self) -> None:
+        """Handles missing error key in response."""
+        resp = MagicMock()
+        resp.status = 403
+        # Valid JSON but missing expected structure
+        content = json.dumps({"something": "else"}).encode()
+        error = HttpError(resp, content, uri="https://api.example.com")
+        assert _is_quota_exceeded(error) is False
+
+
+class TestUpdatePlaylistFields:
+    """Tests for update_playlist with different field combinations."""
+
+    def test_updates_description_only(self, mock_client: MagicMock) -> None:
+        """Updates only description field."""
+        mock_client.playlists().list().execute.return_value = {
+            "items": [
+                {
+                    "id": "PL123",
+                    "snippet": {"title": "Test", "description": "Old desc"},
+                    "status": {"privacyStatus": "public"},
+                }
+            ]
+        }
+
+        update_playlist(mock_client, "PL123", description="New description")
+
+        call_args = mock_client.playlists().update.call_args
+        body = call_args.kwargs.get("body", call_args[1].get("body", {}))
+        assert body["snippet"]["description"] == "New description"
+        assert body["snippet"]["title"] == "Test"  # Unchanged
+
+    def test_updates_privacy_only(self, mock_client: MagicMock) -> None:
+        """Updates only privacy field."""
+        mock_client.playlists().list().execute.return_value = {
+            "items": [
+                {
+                    "id": "PL123",
+                    "snippet": {"title": "Test", "description": "Desc"},
+                    "status": {"privacyStatus": "public"},
+                }
+            ]
+        }
+
+        update_playlist(mock_client, "PL123", privacy="private")
+
+        call_args = mock_client.playlists().update.call_args
+        body = call_args.kwargs.get("body", call_args[1].get("body", {}))
+        assert body["status"]["privacyStatus"] == "private"

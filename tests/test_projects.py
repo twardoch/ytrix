@@ -1,8 +1,8 @@
 """Tests for ytrix.projects module."""
 
 import json
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 from unittest.mock import patch
 
 import pytest
@@ -99,9 +99,7 @@ class TestProjectManager:
             manager = ProjectManager(multi_project_config)
             assert manager.project_names == ["main", "backup"]
 
-    def test_select_project(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_select_project(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Manually selects a project."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -117,9 +115,7 @@ class TestProjectManager:
             with pytest.raises(ValueError, match="not found"):
                 manager.select_project("nonexistent")
 
-    def test_record_quota(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_record_quota(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Records quota usage for current project."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -128,9 +124,7 @@ class TestProjectManager:
             manager.record_quota(100)
             assert manager.current_state.quota_used == 150
 
-    def test_mark_exhausted(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_mark_exhausted(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Marks current project as quota-exhausted."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -138,9 +132,7 @@ class TestProjectManager:
             assert manager.current_state.is_exhausted
             assert manager.current_state.last_error == "daily quota exceeded"
 
-    def test_rotate_on_quota_exceeded(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_rotate_on_quota_exceeded(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Rotates to next project when quota exceeded."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -162,9 +154,7 @@ class TestProjectManager:
             # Both exhausted, should fail
             assert success is False
 
-    def test_state_persisted_to_disk(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_state_persisted_to_disk(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Quota state is saved to disk."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -181,9 +171,7 @@ class TestProjectManager:
             main_state = next(p for p in data["projects"] if p["name"] == "main")
             assert main_state["quota_used"] == 1000
 
-    def test_state_restored_from_disk(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_state_restored_from_disk(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Quota state is restored on init (same day, no reset)."""
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -191,13 +179,17 @@ class TestProjectManager:
         # Use today's date so quota isn't reset
         today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
         state_path = tmp_path / "quota_state.json"
-        state_path.write_text(json.dumps({
-            "current_index": 1,
-            "projects": [
-                {"name": "main", "quota_used": 5000, "last_reset_date": today},
-                {"name": "backup", "quota_used": 3000, "last_reset_date": today},
-            ],
-        }))
+        state_path.write_text(
+            json.dumps(
+                {
+                    "current_index": 1,
+                    "projects": [
+                        {"name": "main", "quota_used": 5000, "last_reset_date": today},
+                        {"name": "backup", "quota_used": 3000, "last_reset_date": today},
+                    ],
+                }
+            )
+        )
 
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -206,18 +198,20 @@ class TestProjectManager:
             assert manager.get_state("main").quota_used == 5000
             assert manager.get_state("backup").quota_used == 3000
 
-    def test_quota_resets_on_new_day(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_quota_resets_on_new_day(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Quota resets when date changes (midnight PT)."""
         state_path = tmp_path / "quota_state.json"
-        state_path.write_text(json.dumps({
-            "current_index": 0,
-            "projects": [
-                {"name": "main", "quota_used": 5000, "last_reset_date": "2020-01-01"},
-                {"name": "backup", "quota_used": 3000, "last_reset_date": "2020-01-01"},
-            ],
-        }))
+        state_path.write_text(
+            json.dumps(
+                {
+                    "current_index": 0,
+                    "projects": [
+                        {"name": "main", "quota_used": 5000, "last_reset_date": "2020-01-01"},
+                        {"name": "backup", "quota_used": 3000, "last_reset_date": "2020-01-01"},
+                    ],
+                }
+            )
+        )
 
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -225,9 +219,7 @@ class TestProjectManager:
             assert manager.get_state("main").quota_used == 0
             assert manager.get_state("backup").quota_used == 0
 
-    def test_legacy_config_works(
-        self, legacy_config: Config, tmp_path: Path
-    ) -> None:
+    def test_legacy_config_works(self, legacy_config: Config, tmp_path: Path) -> None:
         """Works with legacy single-project config."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(legacy_config)
@@ -235,9 +227,7 @@ class TestProjectManager:
             assert manager.current_project.name == "default"
             assert manager.current_project.client_id == "legacy-id"
 
-    def test_status_summary(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_status_summary(self, multi_project_config: Config, tmp_path: Path) -> None:
         """Returns status for all projects."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -291,12 +281,16 @@ class TestProjectManagerEdgeCases:
         today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
         state_path = tmp_path / "quota_state.json"
         # Only "main" in state file
-        state_path.write_text(json.dumps({
-            "current_index": 0,
-            "projects": [
-                {"name": "main", "quota_used": 1000, "last_reset_date": today},
-            ],
-        }))
+        state_path.write_text(
+            json.dumps(
+                {
+                    "current_index": 0,
+                    "projects": [
+                        {"name": "main", "quota_used": 1000, "last_reset_date": today},
+                    ],
+                }
+            )
+        )
 
         # Config has both main and backup
         config = Config(
@@ -323,13 +317,17 @@ class TestProjectManagerEdgeCases:
         today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
         state_path = tmp_path / "quota_state.json"
         # Index 5 is out of bounds for 2 projects
-        state_path.write_text(json.dumps({
-            "current_index": 5,
-            "projects": [
-                {"name": "main", "quota_used": 0, "last_reset_date": today},
-                {"name": "backup", "quota_used": 0, "last_reset_date": today},
-            ],
-        }))
+        state_path.write_text(
+            json.dumps(
+                {
+                    "current_index": 5,
+                    "projects": [
+                        {"name": "main", "quota_used": 0, "last_reset_date": today},
+                        {"name": "backup", "quota_used": 0, "last_reset_date": today},
+                    ],
+                }
+            )
+        )
 
         config = Config(
             channel_id="UC123",

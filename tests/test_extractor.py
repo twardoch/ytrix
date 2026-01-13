@@ -251,9 +251,11 @@ class TestExtractInfoRetry:
                 mock.extract_info.return_value = {"id": "test", "title": "Test", "entries": []}
             return mock
 
-        with patch("ytrix.extractor.YoutubeDL", side_effect=create_mock):
-            with patch("ytrix.extractor.time.sleep"):  # Skip actual sleep
-                result = _extract_info("https://example.com", max_retries=5)
+        with (
+            patch("ytrix.extractor.YoutubeDL", side_effect=create_mock),
+            patch("ytrix.extractor.time.sleep"),
+        ):
+            result = _extract_info("https://example.com", max_retries=5)
 
         assert call_count == 3
         assert result["id"] == "test"
@@ -267,10 +269,12 @@ class TestExtractInfoRetry:
         mock_ydl.__exit__ = MagicMock(return_value=False)
         mock_ydl.extract_info.side_effect = Exception("HTTP Error 429: Too Many Requests")
 
-        with patch("ytrix.extractor.YoutubeDL", return_value=mock_ydl):
-            with patch("ytrix.extractor.time.sleep"):  # Skip actual sleep
-                with pytest.raises(Exception, match="429"):
-                    _extract_info("https://example.com", max_retries=2)
+        with (
+            patch("ytrix.extractor.YoutubeDL", return_value=mock_ydl),
+            patch("ytrix.extractor.time.sleep"),
+            pytest.raises(Exception, match="429"),
+        ):
+            _extract_info("https://example.com", max_retries=2)
 
     def test_no_retry_on_non_rate_limit_error(self) -> None:
         """Does not retry on non-rate-limit errors."""
@@ -281,9 +285,11 @@ class TestExtractInfoRetry:
         mock_ydl.__exit__ = MagicMock(return_value=False)
         mock_ydl.extract_info.side_effect = Exception("Video not found")
 
-        with patch("ytrix.extractor.YoutubeDL", return_value=mock_ydl):
-            with pytest.raises(Exception, match="Video not found"):
-                _extract_info("https://example.com", max_retries=5)
+        with (
+            patch("ytrix.extractor.YoutubeDL", return_value=mock_ydl),
+            pytest.raises(Exception, match="Video not found"),
+        ):
+            _extract_info("https://example.com", max_retries=5)
 
         # Should only be called once since it's not a rate limit error
         assert mock_ydl.extract_info.call_count == 1
