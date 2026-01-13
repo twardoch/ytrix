@@ -1,0 +1,519 @@
+"""Playlist and video info extraction with subtitles.
+
+This module extracts comprehensive info from YouTube playlists including:
+- Full video metadata (title, description, duration, etc.)
+- Subtitles in all available languages (manual and auto-generated)
+- Markdown transcripts derived from subtitles
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+import yaml
+from yt_dlp import YoutubeDL
+
+from ytrix.logging import logger
+from ytrix.models import extract_playlist_id
+
+
+@dataclass
+class SubtitleInfo:
+    """Information about a single subtitle track."""
+
+    lang: str  # ISO language code (e.g., "en", "de")
+    source: str  # "manual" or "automatic"
+    ext: str  # File extension (e.g., "srt", "vtt")
+    url: str | None = None  # URL to download subtitle file
+
+
+@dataclass
+class VideoInfo:
+    """Extended video information including subtitles."""
+
+    id: str
+    title: str
+    description: str
+    channel: str
+    duration: int  # seconds
+    upload_date: str | None = None  # YYYYMMDD format
+    view_count: int | None = None
+    like_count: int | None = None
+    position: int = 0
+    subtitles: list[SubtitleInfo] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for YAML."""
+        d: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "channel": self.channel,
+            "duration": self.duration,
+        }
+        if self.upload_date:
+            d["upload_date"] = self.upload_date
+        if self.view_count is not None:
+            d["view_count"] = self.view_count
+        if self.like_count is not None:
+            d["like_count"] = self.like_count
+        if self.subtitles:
+            d["subtitles"] = [
+                {"lang": s.lang, "source": s.source, "ext": s.ext} for s in self.subtitles
+            ]
+        return d
+
+
+@dataclass
+class PlaylistInfo:
+    """Extended playlist information."""
+
+    id: str
+    title: str
+    description: str
+    channel: str
+    videos: list[VideoInfo] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict for YAML."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "channel": self.channel,
+            "video_count": len(self.videos),
+            "videos": {_video_filename(i, v.title): v.to_dict() for i, v in enumerate(self.videos)},
+        }
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize string for use as filename."""
+    # Replace problematic characters
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    # Remove leading/trailing dots and spaces
+    name = name.strip(". ")
+    # Limit length
+    if len(name) > 100:
+        name = name[:100].rsplit(" ", 1)[0]
+    return name or "untitled"
+
+
+def _video_filename(position: int, title: str) -> str:
+    """Generate filename prefix for video (e.g., '001_Video_Title')."""
+    safe_title = _sanitize_filename(title)
+    return f"{position + 1:03d}_{safe_title}"
+
+
+def extract_video_info(video_id: str) -> VideoInfo:
+    """Extract full video metadata including available subtitles.
+
+    Args:
+        video_id: YouTube video ID
+
+    Returns:
+        VideoInfo with all available metadata and subtitle info
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    with YoutubeDL(
+        {  # type: ignore[arg-type]
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "writesubtitles": False,
+            "writeautomaticsub": False,
+        }
+    ) as ydl:
+        info = ydl.extract_info(url, download=False)
+        if info is None:
+            raise RuntimeError(f"yt-dlp returned no info for {video_id}")
+
+    # Collect subtitle info
+    subtitles: list[SubtitleInfo] = []
+
+    # Manual subtitles
+    for lang, formats in info.get("subtitles", {}).items():
+        if formats:
+            # Prefer SRT format
+            fmt = next((f for f in formats if f.get("ext") == "srt"), formats[0])
+            subtitles.append(
+                SubtitleInfo(
+                    lang=lang,
+                    source="manual",
+                    ext=fmt.get("ext", "vtt"),
+                    url=fmt.get("url"),
+                )
+            )
+
+    # Auto-generated subtitles (only if no manual for that lang)
+    manual_langs = {s.lang for s in subtitles}
+    for lang, formats in info.get("automatic_captions", {}).items():
+        if lang not in manual_langs and formats:
+            # Prefer SRT format
+            fmt = next((f for f in formats if f.get("ext") == "srt"), formats[0])
+            subtitles.append(
+                SubtitleInfo(
+                    lang=lang,
+                    source="automatic",
+                    ext=fmt.get("ext", "vtt"),
+                    url=fmt.get("url"),
+                )
+            )
+
+    return VideoInfo(
+        id=video_id,
+        title=info.get("title") or "",
+        description=info.get("description") or "",
+        channel=info.get("channel") or info.get("uploader") or "",
+        duration=info.get("duration") or 0,
+        upload_date=info.get("upload_date"),
+        view_count=info.get("view_count"),
+        like_count=info.get("like_count"),
+        subtitles=subtitles,
+    )
+
+
+def extract_playlist_info(url_or_id: str) -> PlaylistInfo:
+    """Extract full playlist metadata (without full video details yet).
+
+    Args:
+        url_or_id: Playlist URL or ID
+
+    Returns:
+        PlaylistInfo with basic video list
+    """
+    playlist_id = extract_playlist_id(url_or_id)
+    url = f"https://www.youtube.com/playlist?list={playlist_id}"
+
+    with YoutubeDL(
+        {  # type: ignore[arg-type]
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "skip_download": True,
+        }
+    ) as ydl:
+        data = ydl.extract_info(url, download=False)
+        if data is None:
+            raise RuntimeError(f"yt-dlp returned no info for {playlist_id}")
+
+    videos = []
+    for i, entry in enumerate(data.get("entries", [])):
+        if entry is None:
+            continue
+        videos.append(
+            VideoInfo(
+                id=entry.get("id", ""),
+                title=entry.get("title") or "",
+                description="",  # Not available from flat extract
+                channel=entry.get("channel") or entry.get("uploader") or "",
+                duration=entry.get("duration") or 0,
+                upload_date=entry.get("upload_date"),
+                position=i,
+            )
+        )
+
+    return PlaylistInfo(
+        id=playlist_id,
+        title=data.get("title") or "",
+        description=data.get("description") or "",
+        channel=data.get("channel") or data.get("uploader") or "",
+        videos=videos,
+    )
+
+
+def download_subtitle(sub: SubtitleInfo) -> str | None:
+    """Download subtitle content from URL.
+
+    Args:
+        sub: SubtitleInfo with URL
+
+    Returns:
+        Subtitle file content as string, or None if failed
+    """
+    if not sub.url:
+        return None
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(sub.url)
+            response.raise_for_status()
+            return response.text
+    except Exception as e:
+        logger.warning("Failed to download subtitle: {}", e)
+        return None
+
+
+def srt_to_transcript(srt_content: str) -> str:
+    """Convert SRT subtitle content to plain text transcript.
+
+    Removes timestamps and sequence numbers, joining text naturally.
+
+    Args:
+        srt_content: SRT file content
+
+    Returns:
+        Plain text transcript
+    """
+    lines = []
+    current_text = []
+
+    for line in srt_content.split("\n"):
+        line = line.strip()
+
+        # Skip sequence numbers (just digits)
+        if line.isdigit():
+            continue
+
+        # Skip timestamp lines (contain -->)
+        if "-->" in line:
+            continue
+
+        # Skip empty lines but flush accumulated text
+        if not line:
+            if current_text:
+                lines.append(" ".join(current_text))
+                current_text = []
+            continue
+
+        # Remove HTML tags like <font color="#CCCCCC">
+        line = re.sub(r"<[^>]+>", "", line)
+
+        # Add text
+        if line:
+            current_text.append(line)
+
+    # Flush remaining text
+    if current_text:
+        lines.append(" ".join(current_text))
+
+    # Join paragraphs with double newlines for better readability
+    return "\n\n".join(lines)
+
+
+def vtt_to_transcript(vtt_content: str) -> str:
+    """Convert VTT subtitle content to plain text transcript.
+
+    Similar to SRT but handles VTT header and cue settings.
+
+    Args:
+        vtt_content: VTT file content
+
+    Returns:
+        Plain text transcript
+    """
+    lines = []
+    current_text = []
+    in_header = True
+
+    for line in vtt_content.split("\n"):
+        line = line.strip()
+
+        # Skip VTT header
+        if in_header:
+            if not line or line == "WEBVTT":
+                continue
+            if "-->" in line:
+                in_header = False
+            else:
+                continue
+
+        # Skip timestamp lines (contain -->)
+        if "-->" in line:
+            continue
+
+        # Skip empty lines but flush accumulated text
+        if not line:
+            if current_text:
+                lines.append(" ".join(current_text))
+                current_text = []
+            continue
+
+        # Remove HTML tags and VTT cue tags like <c.colorE5E5E5>
+        line = re.sub(r"<[^>]+>", "", line)
+
+        # Add text
+        if line:
+            current_text.append(line)
+
+    # Flush remaining text
+    if current_text:
+        lines.append(" ".join(current_text))
+
+    return "\n\n".join(lines)
+
+
+def subtitle_to_transcript(content: str, ext: str) -> str:
+    """Convert subtitle content to plain text based on format.
+
+    Args:
+        content: Subtitle file content
+        ext: File extension (srt, vtt, etc.)
+
+    Returns:
+        Plain text transcript
+    """
+    if ext == "srt":
+        return srt_to_transcript(content)
+    elif ext in ("vtt", "webvtt"):
+        return vtt_to_transcript(content)
+    else:
+        # Try SRT parser first, fall back to VTT
+        if "-->" in content:
+            if "WEBVTT" in content[:50]:
+                return vtt_to_transcript(content)
+            return srt_to_transcript(content)
+        return content  # Unknown format, return as-is
+
+
+def create_video_markdown(video: VideoInfo, lang: str, transcript: str) -> str:
+    """Create markdown file content with YAML frontmatter and transcript.
+
+    Args:
+        video: VideoInfo with metadata
+        lang: Language code
+        transcript: Plain text transcript
+
+    Returns:
+        Markdown file content
+    """
+    # Format duration as HH:MM:SS or MM:SS
+    duration_secs = video.duration
+    hours, remainder = divmod(duration_secs, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    duration_str = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+    # Format upload date as YYYY-MM-DD
+    upload_date_str = ""
+    if video.upload_date and len(video.upload_date) == 8:
+        upload_date_str = (
+            f"{video.upload_date[:4]}-{video.upload_date[4:6]}-{video.upload_date[6:]}"
+        )
+
+    # Build YAML frontmatter
+    frontmatter = {
+        "id": video.id,
+        "title": video.title,
+        "channel": video.channel,
+        "language": lang,
+        "duration": duration_str,
+    }
+    if upload_date_str:
+        frontmatter["upload_date"] = upload_date_str
+    if video.description:
+        # Truncate long descriptions
+        desc = video.description
+        if len(desc) > 500:
+            desc = desc[:500] + "..."
+        frontmatter["description"] = desc
+
+    yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+
+    return f"---\n{yaml_str}---\n\n{transcript}\n"
+
+
+def extract_and_save_playlist_info(
+    url_or_id: str,
+    output_dir: Path | str,
+    max_languages: int = 5,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> PlaylistInfo:
+    """Extract full playlist info and save to output directory.
+
+    Creates a folder structure:
+    output_dir/
+      Playlist_Title/
+        001_Video_Title.en.srt
+        001_Video_Title.en.md
+        playlist.yaml
+
+    Args:
+        url_or_id: Playlist URL or ID
+        output_dir: Base output directory
+        max_languages: Maximum number of language tracks to download per video
+        progress_callback: Optional callback(video_index, total_videos, video_title)
+
+    Returns:
+        PlaylistInfo with all extracted data
+    """
+    output_dir = Path(output_dir)
+
+    # Extract playlist metadata
+    logger.info("Extracting playlist metadata...")
+    playlist = extract_playlist_info(url_or_id)
+
+    # Create playlist folder
+    playlist_folder = output_dir / _sanitize_filename(playlist.title)
+    playlist_folder.mkdir(parents=True, exist_ok=True)
+
+    total_videos = len(playlist.videos)
+    logger.info("Processing {} videos...", total_videos)
+
+    for i, video in enumerate(playlist.videos):
+        if progress_callback:
+            progress_callback(i, total_videos, video.title)
+
+        logger.debug("Processing video {}/{}: {}", i + 1, total_videos, video.title)
+
+        try:
+            # Get full video info including subtitles
+            full_video = extract_video_info(video.id)
+            video.description = full_video.description
+            video.duration = full_video.duration
+            video.view_count = full_video.view_count
+            video.like_count = full_video.like_count
+            video.subtitles = full_video.subtitles
+
+            # Generate filename prefix
+            file_prefix = _video_filename(i, video.title)
+
+            # Sort subtitles: manual first, then by language
+            subs = sorted(
+                video.subtitles,
+                key=lambda s: (0 if s.source == "manual" else 1, s.lang),
+            )
+
+            # Limit number of languages
+            seen_langs = set()
+            selected_subs = []
+            for sub in subs:
+                if sub.lang not in seen_langs:
+                    selected_subs.append(sub)
+                    seen_langs.add(sub.lang)
+                if len(selected_subs) >= max_languages:
+                    break
+
+            # Download and save subtitles
+            for sub in selected_subs:
+                content = download_subtitle(sub)
+                if not content:
+                    continue
+
+                # Save subtitle file
+                sub_ext = sub.ext if sub.ext in ("srt", "vtt") else "srt"
+                sub_path = playlist_folder / f"{file_prefix}.{sub.lang}.{sub_ext}"
+                sub_path.write_text(content, encoding="utf-8")
+
+                # Convert to transcript and save markdown
+                transcript = subtitle_to_transcript(content, sub.ext)
+                md_content = create_video_markdown(video, sub.lang, transcript)
+                md_path = playlist_folder / f"{file_prefix}.{sub.lang}.md"
+                md_path.write_text(md_content, encoding="utf-8")
+
+                logger.debug("Saved {} subtitle and transcript", sub.lang)
+
+        except Exception as e:
+            logger.warning("Failed to process video {}: {}", video.id, e)
+            continue
+
+    # Save playlist.yaml
+    playlist_yaml_path = playlist_folder / "playlist.yaml"
+    with open(playlist_yaml_path, "w", encoding="utf-8") as f:
+        yaml.dump(playlist.to_dict(), f, default_flow_style=False, allow_unicode=True, width=120)
+
+    logger.info("Saved playlist info to {}", playlist_folder)
+    return playlist

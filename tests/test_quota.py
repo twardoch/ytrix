@@ -4,8 +4,13 @@ from ytrix.quota import (
     DAILY_QUOTA_LIMIT,
     QUOTA_COSTS,
     QuotaEstimate,
+    QuotaTracker,
     estimate_batch_copy,
     format_quota_warning,
+    get_quota_summary,
+    get_time_until_reset,
+    get_tracker,
+    record_quota,
 )
 
 
@@ -151,3 +156,147 @@ class TestFormatQuotaWarning:
         output = format_quota_warning(estimate)
         assert "requires" not in output
         assert "--resume" not in output
+
+
+class TestQuotaTracker:
+    """Tests for QuotaTracker class."""
+
+    def test_initial_state(self) -> None:
+        """Tracker starts with zero usage."""
+        tracker = QuotaTracker()
+        assert tracker.used == 0
+        assert tracker.remaining == DAILY_QUOTA_LIMIT
+        assert tracker.usage_percent == 0.0
+
+    def test_record_operation(self) -> None:
+        """Records operation and updates usage."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")
+        assert tracker.used == 50
+        assert tracker.operations["playlists.insert"] == 1
+
+    def test_record_multiple_operations(self) -> None:
+        """Tracks multiple operations separately."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")
+        tracker.record("playlists.insert")
+        tracker.record("playlistItems.insert")
+        assert tracker.used == 150
+        assert tracker.operations["playlists.insert"] == 2
+        assert tracker.operations["playlistItems.insert"] == 1
+
+    def test_record_custom_units(self) -> None:
+        """Can specify custom quota units."""
+        tracker = QuotaTracker()
+        tracker.record("custom_op", units=100)
+        assert tracker.used == 100
+
+    def test_remaining_calculation(self) -> None:
+        """Calculates remaining quota correctly."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")  # 50 units
+        assert tracker.remaining == DAILY_QUOTA_LIMIT - 50
+
+    def test_usage_percent(self) -> None:
+        """Calculates usage percentage correctly."""
+        tracker = QuotaTracker()
+        # Use 1000 out of 10000 = 10%
+        for _ in range(20):
+            tracker.record("playlists.insert")  # 20 * 50 = 1000
+        assert tracker.usage_percent == 10.0
+
+    def test_is_warning_threshold(self) -> None:
+        """Warning triggers at 80% usage."""
+        tracker = QuotaTracker()
+        # Use 8000 units = 80%
+        for _ in range(160):
+            tracker.record("playlists.insert")  # 160 * 50 = 8000
+        assert tracker.is_warning() is True
+
+    def test_not_warning_below_threshold(self) -> None:
+        """No warning below 80% usage."""
+        tracker = QuotaTracker()
+        # Use 7900 units = 79%
+        for _ in range(158):
+            tracker.record("playlists.insert")  # 158 * 50 = 7900
+        assert tracker.is_warning() is False
+
+    def test_is_exceeded(self) -> None:
+        """Exceeded when at or over limit."""
+        tracker = QuotaTracker()
+        # Use exactly 10000 units
+        for _ in range(200):
+            tracker.record("playlists.insert")  # 200 * 50 = 10000
+        assert tracker.is_exceeded() is True
+
+    def test_check_and_warn_exceeded(self) -> None:
+        """Returns exceeded message when over limit."""
+        tracker = QuotaTracker()
+        for _ in range(200):
+            tracker.record("playlists.insert")
+        warning = tracker.check_and_warn()
+        assert warning is not None
+        assert "limit reached" in warning
+
+    def test_check_and_warn_warning(self) -> None:
+        """Returns warning message when at threshold."""
+        tracker = QuotaTracker()
+        for _ in range(160):
+            tracker.record("playlists.insert")  # 80%
+        warning = tracker.check_and_warn()
+        assert warning is not None
+        assert "80%" in warning
+
+    def test_check_and_warn_ok(self) -> None:
+        """Returns None when under threshold."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")  # 50 units
+        assert tracker.check_and_warn() is None
+
+    def test_reset(self) -> None:
+        """Reset clears all usage."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")
+        tracker.reset()
+        assert tracker.used == 0
+        assert len(tracker.operations) == 0
+
+    def test_summary(self) -> None:
+        """Summary returns all tracking info."""
+        tracker = QuotaTracker()
+        tracker.record("playlists.insert")
+        summary = tracker.summary()
+        assert summary["used"] == 50
+        assert summary["remaining"] == DAILY_QUOTA_LIMIT - 50
+        assert summary["limit"] == DAILY_QUOTA_LIMIT
+        assert summary["usage_percent"] == 0.5
+        assert "playlists.insert" in summary["operations"]
+
+
+class TestGlobalTracker:
+    """Tests for global tracker functions."""
+
+    def test_get_tracker(self) -> None:
+        """get_tracker returns global tracker instance."""
+        tracker = get_tracker()
+        assert isinstance(tracker, QuotaTracker)
+
+    def test_record_quota(self) -> None:
+        """record_quota updates global tracker."""
+        tracker = get_tracker()
+        initial = tracker.used
+        record_quota("playlistItems.insert")
+        assert tracker.used == initial + 50
+
+    def test_get_quota_summary(self) -> None:
+        """get_quota_summary returns global tracker summary."""
+        summary = get_quota_summary()
+        assert "used" in summary
+        assert "remaining" in summary
+        assert "limit" in summary
+
+    def test_get_time_until_reset(self) -> None:
+        """get_time_until_reset returns formatted time string."""
+        time_str = get_time_until_reset()
+        # Should contain hours and/or minutes
+        assert "h" in time_str or "m" in time_str

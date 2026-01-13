@@ -20,6 +20,7 @@ from tenacity import (
 from ytrix.config import Config, get_token_path
 from ytrix.logging import logger
 from ytrix.models import Playlist, Video
+from ytrix.quota import get_time_until_reset, record_quota
 
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 console = Console(stderr=True)
@@ -136,7 +137,8 @@ def _is_retryable_error(exc: BaseException) -> bool:
 
         # Check for daily quota exceeded (403 quotaExceeded) - NOT retryable
         if _is_quota_exceeded(exc):
-            logger.error("Daily quota exceeded! Resets at midnight Pacific Time.")
+            reset_time = get_time_until_reset()
+            logger.error("Daily quota exceeded! Resets in {} (midnight PT).", reset_time)
             return False
 
         # Retry on rate limit (429) and server errors (5xx)
@@ -216,6 +218,7 @@ def create_playlist(
         "status": {"privacyStatus": privacy},
     }
     response = client.playlists().insert(part="snippet,status", body=body).execute()
+    record_quota("playlists.insert")
     playlist_id: str = response["id"]
     return playlist_id
 
@@ -246,6 +249,8 @@ def update_playlist(
         body["status"]["privacyStatus"] = privacy
 
     client.playlists().update(part="snippet,status", body=body).execute()
+    record_quota("playlists.list")  # list call
+    record_quota("playlists.update")  # update call
 
 
 @api_retry  # type: ignore[misc]
@@ -259,6 +264,7 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
         }
     }
     response = client.playlistItems().insert(part="snippet", body=body).execute()
+    record_quota("playlistItems.insert")
     item_id: str = response["id"]
     return item_id
 
@@ -268,6 +274,7 @@ def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     """Remove video from playlist by playlistItem ID. (50 quota units)"""
     _throttler.wait()
     client.playlistItems().delete(id=playlist_item_id).execute()
+    record_quota("playlistItems.delete")
 
 
 def list_my_playlists(client: Resource, channel_id: str) -> list[Playlist]:

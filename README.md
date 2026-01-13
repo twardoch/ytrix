@@ -140,6 +140,33 @@ ytrix mlist2yaml PLxxxxxx -o playlist.yaml
 ytrix yaml2mlist playlist.yaml
 ```
 
+### Extract playlist info with subtitles
+
+Download subtitles and convert to markdown transcripts:
+
+```bash
+ytrix plist2info PLxxxxxx                         # Extract single playlist
+ytrix plist2info PLxxxxxx --output ./transcripts  # Custom output directory
+ytrix plist2info PLxxxxxx --max-languages 3       # Limit languages per video
+```
+
+Creates a folder structure:
+```
+output_folder/Playlist_Title/
+  001_Video_Title.en.srt      # Subtitle file
+  001_Video_Title.en.md       # Markdown transcript
+  001_Video_Title.de.srt      # Additional language
+  001_Video_Title.de.md
+  playlist.yaml               # Playlist and video metadata
+```
+
+### Extract info from multiple playlists
+
+```bash
+ytrix plists2info playlists.txt                   # Process all playlists
+ytrix plists2info playlists.txt --output ./info   # Custom output directory
+```
+
 ## Terminology
 
 - **plist**: Any YouTube playlist

@@ -10,7 +10,7 @@ import fire
 from rich.console import Console
 from rich.progress import Progress
 
-from ytrix import __version__, api, cache, extractor, yaml_ops
+from ytrix import __version__, api, cache, extractor, info, quota, yaml_ops
 from ytrix.config import get_config_dir, load_config
 from ytrix.dedup import MatchType, analyze_batch_deduplication, load_target_playlists_with_videos
 from ytrix.journal import (
@@ -179,6 +179,51 @@ class YtrixCLI:
             return self._output({"deleted": deleted, "expired_only": expired_only})
 
         console.print(f"[green]{msg}[/green]")
+        return None
+
+    def quota_status(self) -> dict[str, Any] | None:
+        """Show API quota usage for current session.
+
+        Displays quota units consumed, remaining capacity, and time until reset.
+        Note: Only tracks usage within the current session; YouTube does not
+        provide an API to query actual remaining quota.
+
+        Example:
+            ytrix quota_status
+            ytrix --json-output quota_status
+        """
+        summary = quota.get_quota_summary()
+        reset_time = quota.get_time_until_reset()
+
+        if self._json:
+            output = dict(summary)
+            output["reset_in"] = reset_time
+            return self._output(output)
+
+        used = summary["used"]
+        remaining = summary["remaining"]
+        limit = summary["limit"]
+        pct = summary["usage_percent"]
+        ops = summary.get("operations", {})
+
+        console.print("[bold]Session Quota Usage[/bold]")
+        console.print(f"  Used: {used:,} / {limit:,} units ({pct:.1f}%)")
+        console.print(f"  Remaining: {remaining:,} units")
+        console.print(f"  Resets in: {reset_time} (midnight PT)")
+
+        if ops:
+            console.print()
+            console.print("[bold]Operations this session:[/bold]")
+            for op, count in sorted(ops.items()):  # type: ignore[union-attr]
+                unit_cost = quota.QUOTA_COSTS.get(op, 50)
+                total_cost = count * unit_cost  # type: ignore[operator]
+                console.print(f"  {op}: {count} x {unit_cost} = {total_cost:,} units")
+
+        warning = quota.get_tracker().check_and_warn()
+        if warning:
+            console.print()
+            console.print(f"[yellow]{warning}[/yellow]")
+
         return None
 
     def journal_status(
@@ -1275,6 +1320,146 @@ class YtrixCLI:
         """
         # Reuse yaml2mlists since it handles single playlists too
         return self.yaml2mlists(file_path, dry_run=dry_run)
+
+    def plist2info(
+        self,
+        url_or_id: str,
+        output: str | None = None,
+        max_languages: int = 5,
+    ) -> str | dict[str, Any] | None:
+        """Extract playlist info with subtitles and transcripts.
+
+        Downloads all available subtitles and converts them to markdown transcripts.
+        Creates a folder structure:
+          output_folder/Playlist_Title/
+            001_Video_Title.en.srt
+            001_Video_Title.en.md
+            playlist.yaml
+
+        Args:
+            url_or_id: Playlist URL or ID
+            output: Output directory (default: current directory)
+            max_languages: Max subtitle languages per video (default: 5)
+
+        Example:
+            ytrix plist2info PLxxx
+            ytrix plist2info PLxxx --output ./transcripts
+            ytrix plist2info PLxxx --max-languages 3
+        """
+        output_dir = Path(output) if output else Path.cwd()
+
+        if not self._json:
+            console.print("[blue]Extracting playlist info...[/blue]")
+
+        def progress_cb(idx: int, total: int, title: str) -> None:
+            if not self._json:
+                console.print(f"  [{idx + 1}/{total}] {title[:60]}...")
+
+        playlist = info.extract_and_save_playlist_info(
+            url_or_id,
+            output_dir,
+            max_languages=max_languages,
+            progress_callback=progress_cb,
+        )
+
+        playlist_folder = output_dir / info._sanitize_filename(playlist.title)
+
+        if self._json:
+            return self._output(
+                {
+                    "playlist_id": playlist.id,
+                    "title": playlist.title,
+                    "video_count": len(playlist.videos),
+                    "output_folder": str(playlist_folder),
+                }
+            )
+
+        console.print(f"[green]Saved to: {playlist_folder}[/green]")
+        console.print(f"  {len(playlist.videos)} videos processed")
+        return str(playlist_folder)
+
+    def plists2info(
+        self,
+        file_path: str,
+        output: str | None = None,
+        max_languages: int = 5,
+    ) -> list[str] | dict[str, Any] | None:
+        """Extract info from multiple playlists with subtitles and transcripts.
+
+        Processes each playlist from the input file and creates a subfolder for each.
+        Downloads all available subtitles and converts them to markdown transcripts.
+
+        Args:
+            file_path: Text file with playlist URLs/IDs (one per line)
+            output: Output directory (default: current directory)
+            max_languages: Max subtitle languages per video (default: 5)
+
+        Example:
+            ytrix plists2info playlists.txt
+            ytrix plists2info playlists.txt --output ./transcripts
+            ytrix plists2info playlists.txt --max-languages 2
+        """
+        output_dir = Path(output) if output else Path.cwd()
+
+        # Read playlist URLs/IDs from file
+        lines = Path(file_path).read_text().strip().split("\n")
+        lines = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+        if not lines:
+            raise ValueError("No playlist URLs found in file")
+
+        if not self._json:
+            console.print(f"[blue]Processing {len(lines)} playlists...[/blue]")
+
+        results: list[dict[str, Any]] = []
+        output_folders: list[str] = []
+
+        for i, line in enumerate(lines):
+            if not self._json:
+                console.print(f"\n[bold][{i + 1}/{len(lines)}][/bold] {line}")
+
+            try:
+
+                def progress_cb(idx: int, total: int, title: str) -> None:
+                    if not self._json:
+                        console.print(f"    [{idx + 1}/{total}] {title[:50]}...")
+
+                playlist = info.extract_and_save_playlist_info(
+                    line,
+                    output_dir,
+                    max_languages=max_languages,
+                    progress_callback=progress_cb,
+                )
+
+                playlist_folder = output_dir / info._sanitize_filename(playlist.title)
+                output_folders.append(str(playlist_folder))
+
+                results.append(
+                    {
+                        "playlist_id": playlist.id,
+                        "title": playlist.title,
+                        "video_count": len(playlist.videos),
+                        "output_folder": str(playlist_folder),
+                    }
+                )
+
+                if not self._json:
+                    console.print(f"  [green]Saved: {playlist_folder}[/green]")
+
+            except Exception as e:
+                results.append({"url": line, "error": str(e)})
+                if not self._json:
+                    console.print(f"  [red]Error: {e}[/red]")
+
+        if self._json:
+            return self._output(
+                {
+                    "playlists_processed": len(results),
+                    "playlists": results,
+                }
+            )
+
+        console.print(f"\n[green]Done! Processed {len(output_folders)} playlists.[/green]")
+        return output_folders
 
 
 def main() -> None:

@@ -146,12 +146,97 @@
 | YAML editing mistakes | Validate before applying, no delete |
 | OAuth complexity | Use existing google-auth libraries |
 
+## Phase 7: Quota & Rate Limit Handling - MOSTLY COMPLETE
+
+### 7.1 Problem Analysis
+
+The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
+
+1. **No request pacing**: API calls fire as fast as possible
+2. **Insufficient backoff**: 5 attempts with max 60s isn't enough for sustained rate limits
+3. **No error type distinction**: 429 (per-minute rate limit) vs 403 (daily quota) need different handling
+4. **No quota tracking**: Only estimates, no actual usage tracking
+
+**Key insight**: YouTube API has TWO limit types:
+- **Daily quota** (10,000 units, resets midnight PT) → HTTP 403 `quotaExceeded`
+- **Per-minute rate limit** (undocumented, ~100-300 req/min) → HTTP 429 `RATE_LIMIT_EXCEEDED`
+
+### 7.2 Request Throttling (api.py) - COMPLETE
+
+- [x] Add `Throttler` class with configurable delay between requests (default: 200ms)
+- [x] Apply throttling to all write operations (create, update, delete)
+- [x] Make delay configurable via config.toml or CLI flag
+
+### 7.3 Improved Retry Strategy (api.py) - COMPLETE
+
+- [x] Increase max retry attempts for 429 errors (5 → 10)
+- [x] Increase max backoff time (60s → 300s)
+- [x] Add longer initial delay after 429 (start at 5s instead of 1s)
+- [x] Distinguish 429 RATE_LIMIT_EXCEEDED from 403 quotaExceeded
+- [x] For 403 quotaExceeded: Stop immediately, report quota reset time
+
+### 7.4 Session Quota Tracking (quota.py) - COMPLETE
+
+- [x] Add `QuotaTracker` class to track actual units consumed per session
+- [x] Increment counter after each successful API call
+- [x] Warn user when approaching daily limit (>80% consumed)
+- [x] Auto-pause when estimated to exceed quota
+- [x] Display remaining quota in `quota_status` command
+
+### 7.5 Adaptive Pacing (plists2mlists) - COMPLETE
+
+- [x] Start with normal pacing (200ms between calls)
+- [x] On first 429: double delay, log warning
+- [x] On repeated 429s: exponential increase up to 5s between calls
+- [x] Reset to normal pacing after 10 successful calls
+- [x] Add `--throttle` flag to set initial delay (ms)
+
+### 7.6 Better User Feedback - COMPLETE
+
+- [x] Show quota used/remaining via `quota_status` command
+- [x] On 403 quotaExceeded: Show time until midnight PT reset
+- [x] On 429 rate limit: Show "slowing down, will retry in Xs"
+- [x] On persistent failure: Suggest `--throttle 500` or `--resume` later
+
+### 7.7 Testing - COMPLETE
+
+- [x] Test throttler with mock time
+- [x] Test retry behavior for 429 vs 403 errors
+- [x] Test quota tracking increments
+- [x] Test adaptive pacing logic
+
+## Phase 8: Playlist Info Extraction - COMPLETE
+
+### 8.1 Info Module
+- [x] Create `info.py` with VideoInfo, PlaylistInfo dataclasses
+- [x] Extract full video metadata via yt-dlp
+- [x] Extract available subtitles (manual and automatic)
+- [x] Download subtitle files (SRT, VTT)
+
+### 8.2 Transcript Conversion
+- [x] Parse SRT format to plain text
+- [x] Parse VTT format to plain text
+- [x] Generate markdown with YAML frontmatter
+- [x] Handle multi-language subtitle extraction
+
+### 8.3 CLI Commands
+- [x] `plist2info`: Single playlist extraction
+- [x] `plists2info`: Batch playlist extraction
+- [x] Output folder structure with playlist.yaml
+- [x] Progress reporting during extraction
+
+### 8.4 Testing
+- [x] 29 unit tests for info module
+- [x] Live testing with example playlists
+
 ## Success Criteria
 
-- [x] All 14 commands functional (7 core + ls + version + config + cache_stats + cache_clear + journal_status + plists2mlists)
-- [x] Tests pass with 76% coverage (206 tests)
+- [x] All 17 commands functional (14 core + plist2info + plists2info + quota_status)
+- [x] Tests pass with 76% coverage (294 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes
 - [x] --json-output flag for scripting on all commands
 - [x] Git-tag-based semantic versioning via hatch-vcs
+- [x] Batch operations complete without 429 errors under normal load
+- [x] Graceful handling of quota limits with clear user guidance

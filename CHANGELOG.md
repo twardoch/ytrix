@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Playlist info extraction** (Phase 8):
+  - `plist2info`: Extract single playlist with video info and subtitles
+  - `plists2info`: Batch extraction from text file of playlist URLs
+  - Downloads subtitles (manual and automatic) in SRT/VTT format
+  - Converts subtitles to plain text transcripts
+  - Generates markdown files with YAML frontmatter
+  - Output folder structure: `{playlist_name}/{video_title}.{lang}.md`
+  - 29 new tests in test_info.py
+- **Quota tracking** (Phase 7.4):
+  - `quota_status`: View session quota usage
+  - `QuotaTracker` class for actual units consumed per API call
+  - Time until quota reset (midnight PT) in error messages
+  - Warns when approaching daily limit (>80% consumed)
 - `journal_status` CLI command to view batch operation progress
   - Shows summary counts by status (pending, completed, failed, skipped)
   - Displays details of failed tasks with error messages
@@ -23,7 +36,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 247
+- Updated test count to 294
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 - **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists
   - `ls --count`: Uses yt-dlp for video counts (saves ~1 quota unit per playlist)

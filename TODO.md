@@ -1,18 +1,28 @@
 # ytrix TODO
 
-## In Progress (v1.2.0-dev) - Quota & Rate Limit Handling
+## Completed (v1.2.0-dev) - Quota & Rate Limit + Info Extraction
+
+### Playlist Info Extraction (Phase 8)
+- [x] Create info.py module with VideoInfo, PlaylistInfo dataclasses
+- [x] Extract subtitles (manual and automatic) via yt-dlp
+- [x] Parse SRT/VTT to plain text transcripts
+- [x] Generate markdown with YAML frontmatter
+- [x] `plist2info` command for single playlist extraction
+- [x] `plists2info` command for batch extraction
+- [x] 29 tests in test_info.py
 
 ### Session Quota Tracking (quota.py)
-- [ ] Add `QuotaTracker` class for actual usage tracking
-- [ ] Warn at 80% quota consumed
-- [ ] Auto-pause when estimated to exceed quota
+- [x] Add `QuotaTracker` class for actual usage tracking
+- [x] Warn at 80% quota consumed
+- [x] Show time until midnight PT reset on quota errors
+- [x] `quota_status` CLI command
 
 ### User Feedback
-- [ ] Show quota used/remaining after operations
-- [ ] Show time until midnight PT reset on quota errors
-- [ ] Suggest `--throttle` or `--resume` on failures
+- [x] Show quota used/remaining via quota_status command
+- [x] Show time until midnight PT reset on quota errors
+- [x] Suggest `--throttle` or `--resume` on failures
 
-## Completed (v1.2.0-dev)
+## Completed (v1.2.0-dev) - Throttling & Retry
 
 ### Request Throttling (api.py)
 - [x] Add `Throttler` class with configurable delay (default 200ms)
@@ -85,7 +95,7 @@
 - [x] YAML-based playlist editing workflow
 
 ### Testing & Quality
-- [x] 223 tests with 79% coverage
+- [x] 294 tests with 76% coverage
 - [x] mypy strict mode compliant
 - [x] ruff linting and formatting
 
