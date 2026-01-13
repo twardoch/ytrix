@@ -148,6 +148,7 @@ Download subtitles and convert to markdown transcripts:
 ytrix plist2info PLxxxxxx                         # Extract single playlist
 ytrix plist2info PLxxxxxx --output ./transcripts  # Custom output directory
 ytrix plist2info PLxxxxxx --max-languages 3       # Limit languages per video
+ytrix plist2info PLxxxxxx --delay 1.0             # Slower to avoid rate limits
 ```
 
 Creates a folder structure:
@@ -165,6 +166,7 @@ output_folder/Playlist_Title/
 ```bash
 ytrix plists2info playlists.txt                   # Process all playlists
 ytrix plists2info playlists.txt --output ./info   # Custom output directory
+ytrix plists2info playlists.txt --delay 2.0       # Slower if rate limited
 ```
 
 ## Terminology

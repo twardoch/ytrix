@@ -232,7 +232,7 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 ## Success Criteria
 
 - [x] All 17 commands functional (14 core + plist2info + plists2info + quota_status)
-- [x] Tests pass with 76% coverage (294 tests)
+- [x] Tests pass with 79% coverage (311 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes

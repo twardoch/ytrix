@@ -101,7 +101,7 @@
 - [x] YAML-based playlist editing workflow
 
 ### Testing & Quality
-- [x] 294 tests with 76% coverage
+- [x] 311 tests with 79% coverage
 - [x] mypy strict mode compliant
 - [x] ruff linting and formatting
 

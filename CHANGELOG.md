@@ -41,12 +41,12 @@ All notable changes to this project will be documented in this file.
   - Video delay: configurable pause between video processing (default 0.5s)
   - Progress summary: reports success/failure counts at completion
   - `--delay` flag for `plist2info` and `plists2info` commands
-  - 14 new tests for Throttler class (308 total tests)
+  - 17 new tests for throttling (311 total tests)
 
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 294
+- Updated test count to 308
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 - **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists
   - `ls --count`: Uses yt-dlp for video counts (saves ~1 quota unit per playlist)
