@@ -6,7 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Nothing yet
+- **Multi-project credential rotation** (Phase 9):
+  - Support for `[[projects]]` array in config.toml for multiple GCP projects
+  - Per-project OAuth token storage in ~/.ytrix/tokens/{project_name}.json
+  - `projects` command to list configured projects and quota status
+  - `projects_auth <name>` command to authenticate specific project
+  - `projects_select <name>` command to select active project
+  - `--project` flag to force specific project on any command
+  - Automatic quota tracking with daily reset at midnight Pacific Time
+  - State persistence in ~/.ytrix/quota_state.json
+  - 47 new tests for config and projects modules
+
+### Changed
+
+- 352 tests total with Phase 9 additions
 
 ## [1.2.0] - 2026-01-13
 

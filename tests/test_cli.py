@@ -1521,3 +1521,38 @@ class TestJournalStatus:
         assert parsed["pending_only"] is True
         assert len(parsed["tasks"]) == 1
         assert parsed["tasks"][0]["source_title"] == "Pending"
+
+
+class TestProjectFlag:
+    """Tests for --project CLI flag."""
+
+    def test_project_flag_stores_value(self) -> None:
+        """--project flag stores project name."""
+        with patch("ytrix.__main__.configure_logging"), patch("ytrix.__main__.api.set_throttle_delay"):
+            cli = YtrixCLI(project="backup")
+        assert cli._project == "backup"
+
+    def test_project_flag_default_none(self) -> None:
+        """--project defaults to None."""
+        with patch("ytrix.__main__.configure_logging"), patch("ytrix.__main__.api.set_throttle_delay"):
+            cli = YtrixCLI()
+        assert cli._project is None
+
+
+class TestProjectCommands:
+    """Tests for project management commands."""
+
+    def test_projects_command_exists(self) -> None:
+        """projects command exists."""
+        assert hasattr(YtrixCLI, "projects")
+        assert callable(getattr(YtrixCLI, "projects"))
+
+    def test_projects_auth_command_exists(self) -> None:
+        """projects_auth command exists."""
+        assert hasattr(YtrixCLI, "projects_auth")
+        assert callable(getattr(YtrixCLI, "projects_auth"))
+
+    def test_projects_select_command_exists(self) -> None:
+        """projects_select command exists."""
+        assert hasattr(YtrixCLI, "projects_select")
+        assert callable(getattr(YtrixCLI, "projects_select"))
