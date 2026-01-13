@@ -314,7 +314,7 @@ class ProjectManager:
     def status_summary(self) -> list[dict[str, str | int | bool]]:
         """Get status summary for all projects."""
         self._check_quota_reset()
-        result = []
+        result: list[dict[str, str | int | bool]] = []
         current_name = self.current_project.name
         for name in self.project_names:
             state = self._states.get(name, ProjectState(name=name))

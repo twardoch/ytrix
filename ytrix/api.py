@@ -207,7 +207,7 @@ def get_youtube_client(config: Config) -> Resource:
     return build("youtube", "v3", credentials=creds)
 
 
-@api_retry  # type: ignore[misc]
+@api_retry
 def create_playlist(
     client: Resource, title: str, description: str = "", privacy: str = "public"
 ) -> str:
@@ -223,7 +223,7 @@ def create_playlist(
     return playlist_id
 
 
-@api_retry  # type: ignore[misc]
+@api_retry
 def update_playlist(
     client: Resource,
     playlist_id: str,
@@ -253,7 +253,7 @@ def update_playlist(
     record_quota("playlists.update")  # update call
 
 
-@api_retry  # type: ignore[misc]
+@api_retry
 def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
     """Add video to playlist and return playlistItem ID. (50 quota units)"""
     _throttler.wait()
@@ -269,7 +269,7 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
     return item_id
 
 
-@api_retry  # type: ignore[misc]
+@api_retry
 def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     """Remove video from playlist by playlistItem ID. (50 quota units)"""
     _throttler.wait()

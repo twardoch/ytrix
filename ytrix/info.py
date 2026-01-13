@@ -232,7 +232,7 @@ def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
         _ytdlp_throttler.wait()
         try:
             with YoutubeDL(
-                {  # type: ignore[arg-type]
+                {  # pyright: ignore[reportArgumentType]
                     "quiet": True,
                     "no_warnings": True,
                     "skip_download": True,
@@ -328,7 +328,7 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
         _ytdlp_throttler.wait()
         try:
             with YoutubeDL(
-                {  # type: ignore[arg-type]
+                {  # pyright: ignore[reportArgumentType]
                     "quiet": True,
                     "no_warnings": True,
                     "extract_flat": True,
@@ -465,8 +465,8 @@ def srt_to_transcript(srt_content: str) -> str:
     Returns:
         Plain text transcript
     """
-    lines = []
-    current_text = []
+    lines: list[str] = []
+    current_text: list[str] = []
 
     for line in srt_content.split("\n"):
         line = line.strip()
@@ -512,8 +512,8 @@ def vtt_to_transcript(vtt_content: str) -> str:
     Returns:
         Plain text transcript
     """
-    lines = []
-    current_text = []
+    lines: list[str] = []
+    current_text: list[str] = []
     in_header = True
 
     for line in vtt_content.split("\n"):
