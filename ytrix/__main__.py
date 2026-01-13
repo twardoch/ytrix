@@ -12,7 +12,6 @@ from rich.progress import Progress
 
 from ytrix import __version__, api, cache, extractor, info, quota, yaml_ops
 from ytrix.config import Config, get_config_dir, load_config
-from ytrix.projects import get_project_manager, reset_project_manager
 from ytrix.dedup import MatchType, analyze_batch_deduplication, load_target_playlists_with_videos
 from ytrix.journal import (
     Journal,
@@ -26,6 +25,7 @@ from ytrix.journal import (
 )
 from ytrix.logging import configure_logging, logger
 from ytrix.models import Playlist, extract_playlist_id
+from ytrix.projects import get_project_manager
 from ytrix.quota import QuotaEstimate, format_quota_warning
 
 console = Console()
@@ -308,20 +308,24 @@ class YtrixCLI:
             manager.get_credentials()
 
             if self._json:
-                return self._output({
-                    "project": project.name,
-                    "authenticated": True,
-                })
+                return self._output(
+                    {
+                        "project": project.name,
+                        "authenticated": True,
+                    }
+                )
 
             console.print(f"[green]Project '{project.name}' authenticated successfully[/green]")
 
         except Exception as e:
             if self._json:
-                return self._output({
-                    "project": project.name,
-                    "authenticated": False,
-                    "error": str(e),
-                })
+                return self._output(
+                    {
+                        "project": project.name,
+                        "authenticated": False,
+                        "error": str(e),
+                    }
+                )
             console.print(f"[red]Authentication failed: {e}[/red]")
 
         return None
@@ -342,20 +346,24 @@ class YtrixCLI:
             manager.select_project(name)
 
             if self._json:
-                return self._output({
-                    "selected": name,
-                    "success": True,
-                })
+                return self._output(
+                    {
+                        "selected": name,
+                        "success": True,
+                    }
+                )
 
             console.print(f"[green]Selected project '{name}'[/green]")
 
         except ValueError as e:
             if self._json:
-                return self._output({
-                    "selected": name,
-                    "success": False,
-                    "error": str(e),
-                })
+                return self._output(
+                    {
+                        "selected": name,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
             console.print(f"[red]{e}[/red]")
 
         return None

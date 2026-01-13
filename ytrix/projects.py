@@ -89,8 +89,8 @@ class ProjectManager:
     config: Config
     _current_index: int = 0
     _states: dict[str, ProjectState] = field(default_factory=dict)
-    _client: "Any" = field(default=None, repr=False)
-    _credentials: "Any" = field(default=None, repr=False)
+    _client: Any = field(default=None, repr=False)
+    _credentials: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize state for all projects."""
@@ -244,7 +244,7 @@ class ProjectManager:
         logger.info("Selected project '{}'", name)
         self._save_state()
 
-    def get_credentials(self) -> "Any":
+    def get_credentials(self) -> Any:
         """Get OAuth credentials for current project.
 
         Caches credentials until project changes.
@@ -297,7 +297,7 @@ class ProjectManager:
         self._credentials = creds
         return creds
 
-    def get_client(self) -> "Any":
+    def get_client(self) -> Any:
         """Get YouTube API client for current project.
 
         Caches client until project changes.
@@ -318,14 +318,16 @@ class ProjectManager:
         current_name = self.current_project.name
         for name in self.project_names:
             state = self._states.get(name, ProjectState(name=name))
-            result.append({
-                "name": name,
-                "current": name == current_name,
-                "quota_used": state.quota_used,
-                "quota_remaining": max(0, DAILY_QUOTA_LIMIT - state.quota_used),
-                "quota_limit": DAILY_QUOTA_LIMIT,
-                "is_exhausted": state.is_exhausted,
-            })
+            result.append(
+                {
+                    "name": name,
+                    "current": name == current_name,
+                    "quota_used": state.quota_used,
+                    "quota_remaining": max(0, DAILY_QUOTA_LIMIT - state.quota_used),
+                    "quota_limit": DAILY_QUOTA_LIMIT,
+                    "is_exhausted": state.is_exhausted,
+                }
+            )
         return result
 
 

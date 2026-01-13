@@ -233,7 +233,7 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 - [x] 29 unit tests for info module
 - [x] Live testing with example playlists
 
-## Phase 9: Multi-Project Credential Rotation - MOSTLY COMPLETE
+## Phase 9: Multi-Project Credential Rotation - COMPLETE
 
 ### 9.1 Problem Analysis
 
@@ -266,7 +266,7 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - [ ] Add `gcp_inventory <project>` CLI command
 - [ ] Document manual steps required after cloning
 
-### 9.5 CLI Commands - MOSTLY COMPLETE
+### 9.5 CLI Commands - COMPLETE
 
 - [x] `projects`: Show configured projects and quota status
 - [ ] `projects_add <name>`: Interactive setup for new project
@@ -282,7 +282,7 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 ## Success Criteria
 
 - [x] All 17 commands functional (14 core + plist2info + plists2info + quota_status)
-- [x] Tests pass with 79% coverage (321 tests)
+- [x] Tests pass with 80%+ coverage (362 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes
@@ -290,4 +290,4 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - [x] Git-tag-based semantic versioning via hatch-vcs
 - [x] Batch operations complete without 429 errors under normal load
 - [x] Graceful handling of quota limits with clear user guidance
-- [~] Multi-project credential rotation (Phase 9 - core complete, docs pending)
+- [x] Multi-project credential rotation (Phase 9 complete)

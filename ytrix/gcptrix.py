@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # this_file: gcptrix.py
 
 """
@@ -10,6 +9,7 @@ configuration from a source project to a new project with a suffix.
 """
 
 import argparse
+import contextlib
 import json
 import shutil
 import subprocess
@@ -135,9 +135,7 @@ def run_gcloud_command(
         error_msg = e.stderr.strip() if e.stderr else "Unknown error"
         raise GcloudError(f"Command failed: {' '.join(command)}\n{error_msg}") from e
     except FileNotFoundError as e:
-        raise GcloudError(
-            "gcloud CLI not found. Please install the Google Cloud SDK."
-        ) from e
+        raise GcloudError("gcloud CLI not found. Please install the Google Cloud SDK.") from e
 
 
 def check_authentication() -> dict:
@@ -252,9 +250,7 @@ def get_project_info(project_id: str, dry_run: bool = False) -> dict:
     if dry_run:
         return {"projectId": project_id, "parent": None}
 
-    output = run_gcloud_command(
-        ["gcloud", "projects", "describe", project_id, "--format=json"]
-    )
+    output = run_gcloud_command(["gcloud", "projects", "describe", project_id, "--format=json"])
     return json.loads(output)
 
 
@@ -294,9 +290,7 @@ def get_project_labels(project_id: str, dry_run: bool = False) -> dict[str, str]
     return data.get("labels") or {}
 
 
-def set_project_labels(
-    project_id: str, labels: dict[str, str], dry_run: bool = False
-) -> None:
+def set_project_labels(project_id: str, labels: dict[str, str], dry_run: bool = False) -> None:
     """Set labels on a project."""
     if not labels:
         return
@@ -333,9 +327,7 @@ def get_billing_info(project_id: str, dry_run: bool = False) -> dict:
     return json.loads(output)
 
 
-def link_billing(
-    project_id: str, billing_account_id: str, dry_run: bool = False
-) -> None:
+def link_billing(project_id: str, billing_account_id: str, dry_run: bool = False) -> None:
     """Link a project to a billing account."""
     run_gcloud_command(
         [
@@ -356,9 +348,7 @@ def get_iam_policy(project_id: str, dry_run: bool = False) -> str:
     if dry_run:
         return "{}"
 
-    return run_gcloud_command(
-        ["gcloud", "projects", "get-iam-policy", project_id, "--format=json"]
-    )
+    return run_gcloud_command(["gcloud", "projects", "get-iam-policy", project_id, "--format=json"])
 
 
 def set_iam_policy(project_id: str, policy_file: str, dry_run: bool = False) -> None:
@@ -467,9 +457,8 @@ def run_inventory(project_id: str) -> int:
         if sas:
             for sa in sas:
                 email = sa.get("email", "N/A")
-                is_custom = (
-                    email.endswith(".iam.gserviceaccount.com")
-                    and not any(p in email for p in default_patterns)
+                is_custom = email.endswith(".iam.gserviceaccount.com") and not any(
+                    p in email for p in default_patterns
                 )
                 if is_custom:
                     custom_sa_count += 1
@@ -504,9 +493,9 @@ def run_inventory(project_id: str) -> int:
     print(f"{'─' * 50}")
     print("  Resource              Count   Clonable")
     print("  ────────────────────  ─────   ────────")
-    print(f"  Project structure     1       ✓ Yes")
+    print("  Project structure     1       ✓ Yes")
     print(f"  Labels                {label_count:<5}   ✓ Yes")
-    print(f"  IAM policies          1       ✓ Yes")
+    print("  IAM policies          1       ✓ Yes")
     print(f"  Service accounts      {custom_sa_count:<5}   ✓ Yes (custom only)")
     print(f"  Enabled services      {service_count:<5}   ✓ Yes")
     print(f"  Billing linkage       {'1' if has_billing else '0':<5}   ✓ Yes")
@@ -549,25 +538,35 @@ def create_service_account(
     """Create a service account in a project."""
     run_gcloud_command(
         [
-            "gcloud", "iam", "service-accounts", "create", account_id,
-            "--project", project_id,
-            "--display-name", display_name,
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "create",
+            account_id,
+            "--project",
+            project_id,
+            "--display-name",
+            display_name,
         ],
         dry_run=dry_run,
     )
 
 
-def get_service_account_iam(
-    project_id: str, sa_email: str, dry_run: bool = False
-) -> list[dict]:
+def get_service_account_iam(project_id: str, sa_email: str, dry_run: bool = False) -> list[dict]:
     """Get IAM bindings for a service account."""
     if dry_run:
         return []
 
     output = run_gcloud_command(
         [
-            "gcloud", "iam", "service-accounts", "get-iam-policy", sa_email,
-            "--project", project_id, "--format=json"
+            "gcloud",
+            "iam",
+            "service-accounts",
+            "get-iam-policy",
+            sa_email,
+            "--project",
+            project_id,
+            "--format=json",
         ],
         allow_failure=True,
     )
@@ -700,17 +699,18 @@ Authentication:
     )
     parser.add_argument("source_project", nargs="?", help="The source project ID.")
     parser.add_argument(
-        "new_project_suffix", nargs="?",
-        help="The suffix for the new project (creates SOURCE-SUFFIX)."
+        "new_project_suffix",
+        nargs="?",
+        help="The suffix for the new project (creates SOURCE-SUFFIX).",
     )
     parser.add_argument(
-        "--inventory", "-i",
+        "--inventory",
+        "-i",
         action="store_true",
-        help="Show inventory of resources in source project (no cloning)."
+        help="Show inventory of resources in source project (no cloning).",
     )
     parser.add_argument(
-        "--new-project",
-        help="Full project ID for the new project (overrides suffix)."
+        "--new-project", help="Full project ID for the new project (overrides suffix)."
     )
     parser.add_argument(
         "--dry-run",
@@ -723,12 +723,14 @@ Authentication:
         help="Show detailed authentication instructions.",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Show detailed output including gcloud commands.",
     )
     parser.add_argument(
-        "--quiet", "-q",
+        "--quiet",
+        "-q",
         action="store_true",
         help="Show only errors and warnings (minimal output).",
     )
@@ -744,7 +746,7 @@ Authentication:
     )
     parser.add_argument(
         "--exclude-services",
-        help="Comma-separated list of services to skip (e.g., 'bigquery.googleapis.com,storage.googleapis.com').",
+        help="Comma-separated services to skip (e.g., 'bigquery.googleapis.com').",
     )
 
     args = parser.parse_args()
@@ -919,10 +921,8 @@ Authentication:
     finally:
         # Clean up temp files
         if not dry_run and temp_dir:
-            try:
+            with contextlib.suppress(OSError):
                 shutil.rmtree(temp_dir)
-            except OSError:
-                pass
 
     # Step 9: Clone service accounts
     if not args.skip_service_accounts:
@@ -941,7 +941,8 @@ Authentication:
                 "firebase-adminsdk",
             ]
             custom_sas = [
-                sa for sa in service_accounts
+                sa
+                for sa in service_accounts
                 if sa.get("email", "").endswith(".iam.gserviceaccount.com")
                 and not any(pattern in sa.get("email", "") for pattern in default_patterns)
             ]
@@ -982,8 +983,10 @@ Authentication:
         skipped_count = len(services) - len(services_to_enable)
 
         if services_to_enable:
-            print_info(f"Found {len(services_to_enable)} services to enable" +
-                      (f" ({skipped_count} excluded)" if skipped_count else ""))
+            print_info(
+                f"Found {len(services_to_enable)} services to enable"
+                + (f" ({skipped_count} excluded)" if skipped_count else "")
+            )
             for i, service in enumerate(services_to_enable, 1):
                 print_info(f"  [{i}/{len(services_to_enable)}] Enabling {service}...")
                 try:
@@ -1004,7 +1007,9 @@ Authentication:
     else:
         print_section("Automated Cloning Complete")
         print(f"  New project created: {new_project_id}")
-        print(f"  Console: https://console.cloud.google.com/home/dashboard?project={new_project_id}")
+        print(
+            f"  Console: https://console.cloud.google.com/home/dashboard?project={new_project_id}"
+        )
 
     # Print manual steps
     print_manual_steps(source_project_id, new_project_id)

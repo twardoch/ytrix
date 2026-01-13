@@ -250,6 +250,111 @@ class TestProjectManager:
             assert main["quota_remaining"] == 8000
 
 
+class TestProjectManagerEdgeCases:
+    """Tests for ProjectManager edge cases and error handling."""
+
+    def test_corrupted_state_file_reinitializes(self, tmp_path: Path) -> None:
+        """Corrupted state file is handled gracefully."""
+        config = Config(
+            channel_id="UC123",
+            projects=[ProjectConfig(name="main", client_id="id1", client_secret="s1")],
+        )
+        state_path = tmp_path / "quota_state.json"
+        state_path.write_text("not valid json {{{")
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            # Should initialize fresh state despite corruption
+            assert manager.project_names == ["main"]
+            assert manager.get_state("main").quota_used == 0
+
+    def test_state_file_with_missing_keys(self, tmp_path: Path) -> None:
+        """State file missing required keys is handled."""
+        config = Config(
+            channel_id="UC123",
+            projects=[ProjectConfig(name="main", client_id="id1", client_secret="s1")],
+        )
+        state_path = tmp_path / "quota_state.json"
+        # Missing "projects" key
+        state_path.write_text('{"current_index": 0}')
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            # Should handle gracefully
+            assert manager.project_names == ["main"]
+
+    def test_new_project_added_to_config(self, tmp_path: Path) -> None:
+        """New project in config gets added to state."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+        state_path = tmp_path / "quota_state.json"
+        # Only "main" in state file
+        state_path.write_text(json.dumps({
+            "current_index": 0,
+            "projects": [
+                {"name": "main", "quota_used": 1000, "last_reset_date": today},
+            ],
+        }))
+
+        # Config has both main and backup
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(name="main", client_id="id1", client_secret="s1"),
+                ProjectConfig(name="backup", client_id="id2", client_secret="s2"),
+            ],
+        )
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            # Main should have restored quota
+            assert manager.get_state("main").quota_used == 1000
+            # Backup should be initialized fresh
+            assert manager.get_state("backup").quota_used == 0
+            assert "backup" in manager.project_names
+
+    def test_current_index_bounds_check(self, tmp_path: Path) -> None:
+        """Index out of bounds is reset to 0."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+        state_path = tmp_path / "quota_state.json"
+        # Index 5 is out of bounds for 2 projects
+        state_path.write_text(json.dumps({
+            "current_index": 5,
+            "projects": [
+                {"name": "main", "quota_used": 0, "last_reset_date": today},
+                {"name": "backup", "quota_used": 0, "last_reset_date": today},
+            ],
+        }))
+
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(name="main", client_id="id1", client_secret="s1"),
+                ProjectConfig(name="backup", client_id="id2", client_secret="s2"),
+            ],
+        )
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            # Should reset to valid index
+            assert manager.current_project.name in ["main", "backup"]
+
+    def test_no_projects_configured_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when no projects configured."""
+        # Config with no projects and no oauth
+        config = Config(channel_id="UC123")
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            with pytest.raises(ValueError, match="No projects configured"):
+                _ = manager.current_project
+
+
 class TestGetProjectManager:
     """Tests for get_project_manager function."""
 
