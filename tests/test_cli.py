@@ -426,6 +426,113 @@ class TestPlist2mlist:
         assert result is None
 
 
+class TestPlist2mlistFlags:
+    """Tests for plist2mlist --title and --privacy flags."""
+
+    def test_custom_title_dry_run(self, cli: YtrixCLI, capsys) -> None:
+        """--title flag shows custom title in dry run."""
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Original Title",
+            description="Desc",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist):
+            cli.plist2mlist("PLsource", dry_run=True, title="My Custom Title")
+
+        captured = capsys.readouterr()
+        assert "My Custom Title" in captured.out
+        # The "Title:" line should show custom title, not original
+        assert "Title: My Custom Title" in captured.out
+
+    def test_custom_title_json_dry_run(self, cli_json: YtrixCLI, capsys) -> None:
+        """--title flag with JSON output in dry run."""
+        import json as json_mod
+
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Original Title",
+            description="Desc",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist):
+            cli_json.plist2mlist("PLsource", dry_run=True, title="Custom Title")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["title"] == "Custom Title"
+
+    def test_privacy_dry_run(self, cli: YtrixCLI, capsys) -> None:
+        """--privacy flag shows in dry run."""
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Title",
+            description="Desc",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist):
+            cli.plist2mlist("PLsource", dry_run=True, privacy="unlisted")
+
+        captured = capsys.readouterr()
+        assert "unlisted" in captured.out
+
+    def test_privacy_json_dry_run(self, cli_json: YtrixCLI, capsys) -> None:
+        """--privacy flag with JSON output in dry run."""
+        import json as json_mod
+
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Title",
+            description="Desc",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist):
+            cli_json.plist2mlist("PLsource", dry_run=True, privacy="private")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["privacy"] == "private"
+
+    def test_invalid_privacy_raises(self, cli: YtrixCLI) -> None:
+        """Invalid --privacy value raises ValueError."""
+        with pytest.raises(ValueError, match="--privacy must be"):
+            cli.plist2mlist("PLtest", privacy="invalid")
+
+    def test_title_and_privacy_create(
+        self, cli_json: YtrixCLI, mock_config: MagicMock, mock_client: MagicMock, capsys
+    ) -> None:
+        """--title and --privacy are used when creating playlist."""
+        import json as json_mod
+
+        source_playlist = Playlist(
+            id="PLsource",
+            title="Original",
+            description="Desc",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+
+        with (
+            patch("ytrix.__main__.load_config", return_value=mock_config),
+            patch("ytrix.__main__.api.get_youtube_client", return_value=mock_client),
+            patch("ytrix.__main__.extractor.extract_playlist", return_value=source_playlist),
+            patch("ytrix.__main__.api.create_playlist", return_value="PLnew") as mock_create,
+            patch("ytrix.__main__.api.add_video_to_playlist"),
+        ):
+            cli_json.plist2mlist("PLsource", title="Custom", privacy="unlisted")
+
+        # Verify create_playlist was called with custom title and privacy
+        mock_create.assert_called_once_with(mock_client, "Custom", "Desc", "unlisted")
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["title"] == "Custom"
+        assert parsed["privacy"] == "unlisted"
+
+
 class TestPlists2mlist:
     """Tests for plists2mlist command."""
 
@@ -924,6 +1031,176 @@ class TestErrorCases:
             pytest.raises(FileNotFoundError, match="Config not found"),
         ):
             cli.ls()
+
+
+class TestCacheCommands:
+    """Tests for cache_stats and cache_clear commands."""
+
+    def test_cache_stats_shows_info(self, cli: YtrixCLI, capsys) -> None:
+        """cache_stats command shows cache statistics."""
+        mock_stats = {
+            "path": "/tmp/cache.db",
+            "size_mb": 1.5,
+            "playlists": {"valid": 5, "total": 10},
+            "videos": {"valid": 100, "total": 150},
+            "playlist_videos": {"valid": 50, "total": 75},
+            "channel_playlists": {"valid": 2, "total": 3},
+        }
+        with patch("ytrix.__main__.cache.get_cache_stats", return_value=mock_stats):
+            cli.cache_stats()
+
+        captured = capsys.readouterr()
+        assert "/tmp/cache.db" in captured.out
+        assert "1.5 MB" in captured.out
+        assert "playlists: 5 valid / 10 total" in captured.out
+        assert "videos: 100 valid / 150 total" in captured.out
+
+    def test_cache_stats_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """cache_stats with JSON output returns dict."""
+        import json as json_mod
+
+        mock_stats = {
+            "path": "/tmp/cache.db",
+            "size_mb": 1.5,
+            "playlists": {"valid": 5, "total": 10},
+            "videos": {"valid": 100, "total": 150},
+            "playlist_videos": {"valid": 50, "total": 75},
+            "channel_playlists": {"valid": 2, "total": 3},
+        }
+        with patch("ytrix.__main__.cache.get_cache_stats", return_value=mock_stats):
+            cli_json.cache_stats()
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["path"] == "/tmp/cache.db"
+        assert parsed["size_mb"] == 1.5
+        assert parsed["playlists"]["valid"] == 5
+
+    def test_cache_stats_no_size(self, cli: YtrixCLI, capsys) -> None:
+        """cache_stats handles missing size_mb gracefully."""
+        mock_stats = {
+            "path": "/tmp/cache.db",
+            "playlists": {"valid": 0, "total": 0},
+            "videos": {"valid": 0, "total": 0},
+            "playlist_videos": {"valid": 0, "total": 0},
+            "channel_playlists": {"valid": 0, "total": 0},
+        }
+        with patch("ytrix.__main__.cache.get_cache_stats", return_value=mock_stats):
+            cli.cache_stats()
+
+        captured = capsys.readouterr()
+        assert "/tmp/cache.db" in captured.out
+        assert "MB" not in captured.out  # No size_mb field
+
+    def test_cache_clear_all(self, cli: YtrixCLI, capsys) -> None:
+        """cache_clear clears all entries."""
+        with patch("ytrix.__main__.cache.clear_cache", return_value=100) as mock_clear:
+            cli.cache_clear()
+
+        mock_clear.assert_called_once()
+        captured = capsys.readouterr()
+        assert "Cleared 100 cache entries" in captured.out
+
+    def test_cache_clear_expired_only(self, cli: YtrixCLI, capsys) -> None:
+        """cache_clear --expired-only clears only expired entries."""
+        with patch("ytrix.__main__.cache.clear_expired", return_value=25) as mock_clear:
+            cli.cache_clear(expired_only=True)
+
+        mock_clear.assert_called_once()
+        captured = capsys.readouterr()
+        assert "Cleared 25 expired cache entries" in captured.out
+
+    def test_cache_clear_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """cache_clear with JSON output returns dict."""
+        import json as json_mod
+
+        with patch("ytrix.__main__.cache.clear_cache", return_value=50):
+            cli_json.cache_clear()
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["deleted"] == 50
+        assert parsed["expired_only"] is False
+
+    def test_cache_clear_expired_json_output(self, cli_json: YtrixCLI, capsys) -> None:
+        """cache_clear --expired-only with JSON output."""
+        import json as json_mod
+
+        with patch("ytrix.__main__.cache.clear_expired", return_value=10):
+            cli_json.cache_clear(expired_only=True)
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["deleted"] == 10
+        assert parsed["expired_only"] is True
+
+
+class TestConfigTokenStatus:
+    """Tests for config command token status display."""
+
+    def test_config_shows_token_exists(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config shows green when OAuth token exists."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("channel_id = 'UCtest'\n[oauth]\nclient_id = 'id'\n")
+        token_file = tmp_path / "token.json"
+        token_file.write_text('{"access_token": "test"}')
+
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+
+        captured = capsys.readouterr()
+        assert "OAuth token cached" in captured.out
+
+    def test_config_shows_no_token(self, cli: YtrixCLI, capsys, tmp_path: Path) -> None:
+        """Config shows yellow when OAuth token missing."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("channel_id = 'UCtest'\n[oauth]\nclient_id = 'id'\n")
+        # No token.json created
+
+        with patch("ytrix.__main__.get_config_dir", return_value=tmp_path):
+            cli.config()
+
+        captured = capsys.readouterr()
+        assert "No OAuth token yet" in captured.out
+
+
+class TestListUserWithCount:
+    """Tests for ls --user --count flag."""
+
+    def test_list_user_with_count(self, cli: YtrixCLI, capsys) -> None:
+        """List --user --count shows video counts via yt-dlp."""
+        playlists = [
+            Playlist(id="PLuser1", title="User Playlist 1"),
+            Playlist(id="PLuser2", title="User Playlist 2"),
+        ]
+
+        with (
+            patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=playlists),
+            patch("ytrix.__main__.extractor.get_video_count", side_effect=[10, 25]),
+        ):
+            cli.ls(user="@testchannel", count=True)
+
+        captured = capsys.readouterr()
+        assert "10 videos" in captured.out
+        assert "25 videos" in captured.out
+
+    def test_list_user_with_count_json(self, cli_json: YtrixCLI, capsys) -> None:
+        """List --user --count with JSON includes video_count."""
+        import json as json_mod
+
+        playlists = [
+            Playlist(id="PLuser1", title="User Playlist 1"),
+        ]
+
+        with (
+            patch("ytrix.__main__.extractor.extract_channel_playlists", return_value=playlists),
+            patch("ytrix.__main__.extractor.get_video_count", return_value=42),
+        ):
+            cli_json.ls(user="@testchannel", count=True)
+
+        captured = capsys.readouterr()
+        parsed = json_mod.loads(captured.out)
+        assert parsed["playlists"][0]["video_count"] == 42
 
 
 class TestJournalStatus:

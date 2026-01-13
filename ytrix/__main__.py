@@ -363,7 +363,12 @@ class YtrixCLI:
         return None
 
     def plist2mlist(
-        self, url_or_id: str, dry_run: bool = False, dedup: bool = True
+        self,
+        url_or_id: str,
+        dry_run: bool = False,
+        dedup: bool = True,
+        title: str | None = None,
+        privacy: str = "public",
     ) -> str | dict[str, Any] | None:
         """Copy external playlist to your channel.
 
@@ -371,12 +376,18 @@ class YtrixCLI:
             url_or_id: Playlist URL or ID to copy
             dry_run: Show what would be created without making changes
             dedup: Check for existing duplicates before creating (default: True)
+            title: Custom title for the new playlist (default: use source title)
+            privacy: Privacy setting: public, unlisted, or private (default: public)
 
         Example:
             ytrix plist2mlist "https://youtube.com/playlist?list=PLxxx"
             ytrix plist2mlist PLxxx --dry-run
             ytrix plist2mlist PLxxx --no-dedup
+            ytrix plist2mlist PLxxx --title "My Copy"
+            ytrix plist2mlist PLxxx --privacy unlisted
         """
+        if privacy not in ("public", "unlisted", "private"):
+            raise ValueError("--privacy must be 'public', 'unlisted', or 'private'")
         from ytrix.dedup import MatchType, find_matching_playlist
 
         logger.debug("plist2mlist called with url_or_id={}, dedup={}", url_or_id, dedup)
@@ -429,9 +440,11 @@ class YtrixCLI:
                         console.print(f"[yellow]Adding {len(missing)} missing videos...[/yellow]")
 
         if dry_run:
+            playlist_title = title or source.title
             result: dict[str, Any] = {
                 "dry_run": True,
-                "title": source.title,
+                "title": playlist_title,
+                "privacy": privacy,
                 "description": source.description,
                 "video_count": len(source.videos),
                 "videos": [{"id": v.id, "title": v.title} for v in source.videos],
@@ -446,7 +459,8 @@ class YtrixCLI:
             if self._json:
                 return self._output(result)
             console.print("[yellow]Dry run - would create:[/yellow]")
-            console.print(f"  Title: {source.title}")
+            console.print(f"  Title: {playlist_title}")
+            console.print(f"  Privacy: {privacy}")
             console.print(f"  Videos: {len(source.videos)}")
             for v in source.videos[:5]:
                 console.print(f"    - {v.title[:50]}")
@@ -501,10 +515,11 @@ class YtrixCLI:
             )
 
         # No match - create new playlist
+        playlist_title = title or source.title
         if not self._json:
             console.print("[blue]Creating playlist on your channel...[/blue]")
 
-        new_id = api.create_playlist(client, source.title, source.description)
+        new_id = api.create_playlist(client, playlist_title, source.description, privacy)
         logger.debug("Created playlist with id={}", new_id)
 
         added = 0
@@ -537,7 +552,8 @@ class YtrixCLI:
             {
                 "playlist_id": new_id,
                 "url": url,
-                "title": source.title,
+                "title": playlist_title,
+                "privacy": privacy,
                 "videos_added": added,
                 "videos_skipped": skipped,
             }

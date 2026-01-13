@@ -6,9 +6,17 @@
 - [x] Configure hatch-vcs for git-tag-based semver
 - [x] Add `journal_status` CLI command
 
-### plist2mlist Deduplication
+### plist2mlist Enhancements
 - [x] Update `plist2mlist` with `--dedup` flag (default True)
 - [x] Skip creation for exact matches, update for partial matches
+- [x] Add `--title` flag for custom playlist title
+- [x] Add `--privacy` flag (public/unlisted/private)
+
+### Test Coverage
+- [x] Add tests for cache_stats and cache_clear commands
+- [x] Add tests for config token status display
+- [x] Add tests for ls --user --count flag
+- [x] Add tests for --title and --privacy flags
 
 ### Tests for New Modules
 - [x] Write tests for cache module (14 tests)
@@ -44,7 +52,7 @@
 - [x] YAML-based playlist editing workflow
 
 ### Testing & Quality
-- [x] 206 tests with 76% coverage
+- [x] 223 tests with 79% coverage
 - [x] mypy strict mode compliant
 - [x] ruff linting and formatting
 

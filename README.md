@@ -72,6 +72,8 @@ ytrix plist2mlist https://www.youtube.com/playlist?list=PLxxxxxx
 ytrix plist2mlist PLxxxxxx  # ID also works
 ytrix plist2mlist PLxxxxxx --dry-run    # Preview without creating
 ytrix plist2mlist PLxxxxxx --no-dedup   # Skip duplicate check
+ytrix plist2mlist PLxxxxxx --title "My Custom Title"
+ytrix plist2mlist PLxxxxxx --privacy unlisted  # public, unlisted, private
 ```
 
 The `--dedup` flag (default: True) checks for existing playlists:

@@ -13,11 +13,13 @@ All notable changes to this project will be documented in this file.
   - `--pending-only` flag to show only incomplete tasks
   - JSON output support with `--json-output`
 - Git-tag-based semantic versioning via hatch-vcs
+- `plist2mlist --title` flag for custom playlist titles
+- `plist2mlist --privacy` flag (public, unlisted, private)
 
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 206 (76% coverage)
+- Updated test count to 223 (79% coverage)
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 
 ## [1.0.0] - 2026-01-12
