@@ -138,6 +138,7 @@ class VideoInfo:
             "description": self.description,
             "channel": self.channel,
             "duration": self.duration,
+            "duration_formatted": format_duration(self.duration),
         }
         if self.upload_date:
             d["upload_date"] = self.upload_date
@@ -164,14 +165,35 @@ class PlaylistInfo:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for YAML."""
+        total_duration = sum(v.duration for v in self.videos)
         return {
             "id": self.id,
             "title": self.title,
             "description": self.description,
             "channel": self.channel,
             "video_count": len(self.videos),
+            "total_duration": total_duration,
+            "total_duration_formatted": format_duration(total_duration),
             "videos": {_video_filename(i, v.title): v.to_dict() for i, v in enumerate(self.videos)},
         }
+
+
+def format_duration(seconds: int) -> str:
+    """Format duration in seconds to human-readable HH:MM:SS or MM:SS.
+
+    Args:
+        seconds: Duration in seconds
+
+    Returns:
+        Formatted string like "2:05" or "1:02:05"
+    """
+    if seconds < 0:
+        seconds = 0
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
 
 
 def _sanitize_filename(name: str) -> str:
@@ -533,11 +555,7 @@ def create_video_markdown(video: VideoInfo, lang: str, transcript: str) -> str:
     Returns:
         Markdown file content
     """
-    # Format duration as HH:MM:SS or MM:SS
-    duration_secs = video.duration
-    hours, remainder = divmod(duration_secs, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    duration_str = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+    duration_str = format_duration(video.duration)
 
     # Format upload date as YYYY-MM-DD
     upload_date_str = ""

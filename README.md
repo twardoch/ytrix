@@ -161,6 +161,21 @@ output_folder/Playlist_Title/
   playlist.yaml               # Playlist and video metadata
 ```
 
+The `playlist.yaml` includes duration info:
+```yaml
+id: PLxxxxxx
+title: "Playlist Title"
+video_count: 10
+total_duration: 3600          # Total seconds
+total_duration_formatted: "1:00:00"
+videos:
+  001_Video_Title:
+    id: abc123
+    duration: 360             # Video seconds
+    duration_formatted: "6:00"
+    ...
+```
+
 ### Extract info from multiple playlists
 
 ```bash

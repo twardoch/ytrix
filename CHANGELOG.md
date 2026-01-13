@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Duration formatting in info output** (Phase 8.1):
+  - `format_duration(seconds)` helper function converts seconds to HH:MM:SS or MM:SS
+  - `VideoInfo.to_dict()` now includes `duration_formatted` field
+  - `PlaylistInfo.to_dict()` now includes `total_duration` (seconds) and `total_duration_formatted`
+  - 10 new tests for duration formatting (321 total tests)
 - **Playlist info extraction** (Phase 8):
   - `plist2info`: Extract single playlist with video info and subtitles
   - `plists2info`: Batch extraction from text file of playlist URLs
@@ -46,7 +51,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 308
+- Updated test count to 321
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 - **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists
   - `ls --count`: Uses yt-dlp for video counts (saves ~1 quota unit per playlist)

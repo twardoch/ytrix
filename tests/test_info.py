@@ -10,6 +10,32 @@ import pytest
 from ytrix import info
 
 
+class TestFormatDuration:
+    """Tests for format_duration function."""
+
+    def test_formats_seconds_only(self) -> None:
+        assert info.format_duration(45) == "0:45"
+
+    def test_formats_minutes_seconds(self) -> None:
+        assert info.format_duration(125) == "2:05"
+
+    def test_formats_hours_minutes_seconds(self) -> None:
+        assert info.format_duration(3725) == "1:02:05"
+
+    def test_handles_zero(self) -> None:
+        assert info.format_duration(0) == "0:00"
+
+    def test_handles_negative(self) -> None:
+        assert info.format_duration(-10) == "0:00"
+
+    def test_formats_exact_hour(self) -> None:
+        assert info.format_duration(3600) == "1:00:00"
+
+    def test_formats_large_duration(self) -> None:
+        # 10 hours, 30 minutes, 15 seconds
+        assert info.format_duration(37815) == "10:30:15"
+
+
 class TestSanitizeFilename:
     """Tests for _sanitize_filename function."""
 
@@ -230,6 +256,7 @@ class TestVideoInfo:
         assert d["id"] == "abc123"
         assert d["title"] == "Test"
         assert d["duration"] == 120
+        assert d["duration_formatted"] == "2:00"
         assert d["view_count"] == 1000
         assert len(d["subtitles"]) == 1
 
@@ -258,7 +285,45 @@ class TestPlaylistInfo:
         assert d["id"] == "PLxxx"
         assert d["title"] == "Test Playlist"
         assert d["video_count"] == 1
+        assert d["total_duration"] == 60
+        assert d["total_duration_formatted"] == "1:00"
         assert "001_Video 1" in d["videos"]
+
+    def test_to_dict_multiple_videos_sums_duration(self) -> None:
+        playlist = info.PlaylistInfo(
+            id="PLxxx",
+            title="Test Playlist",
+            description="Desc",
+            channel="Channel",
+            videos=[
+                info.VideoInfo(
+                    id="v1", title="Video 1", description="", channel="Ch", duration=60, position=0
+                ),
+                info.VideoInfo(
+                    id="v2", title="Video 2", description="", channel="Ch", duration=120, position=1
+                ),
+                info.VideoInfo(
+                    id="v3", title="Video 3", description="", channel="Ch", duration=3600, position=2
+                ),
+            ],
+        )
+        d = playlist.to_dict()
+        assert d["video_count"] == 3
+        assert d["total_duration"] == 3780  # 60 + 120 + 3600
+        assert d["total_duration_formatted"] == "1:03:00"
+
+    def test_to_dict_empty_playlist(self) -> None:
+        playlist = info.PlaylistInfo(
+            id="PLxxx",
+            title="Empty Playlist",
+            description="",
+            channel="Channel",
+            videos=[],
+        )
+        d = playlist.to_dict()
+        assert d["video_count"] == 0
+        assert d["total_duration"] == 0
+        assert d["total_duration_formatted"] == "0:00"
 
 
 class TestExtractVideoInfo:
