@@ -3,7 +3,7 @@
 import json
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -380,3 +380,157 @@ class TestGetProjectManager:
             reset_project_manager()
             m2 = get_project_manager(config)
             assert m1 is not m2
+
+    def test_loads_config_when_not_provided(self, tmp_path: Path) -> None:
+        """Loads config from disk when not provided."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch("ytrix.config.load_config", return_value=config) as mock_load,
+        ):
+            reset_project_manager()
+            manager = get_project_manager()
+            mock_load.assert_called_once()
+            assert manager.project_names == ["default"]
+
+
+class TestGetCredentials:
+    """Tests for ProjectManager.get_credentials method."""
+
+    def test_returns_cached_credentials(self, tmp_path: Path) -> None:
+        """Returns cached credentials on second call."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            manager._credentials = mock_creds
+            result = manager.get_credentials()
+            assert result is mock_creds
+
+    def test_loads_credentials_from_token_file(self, tmp_path: Path) -> None:
+        """Loads credentials from existing token file."""
+        config = Config(
+            channel_id="UC123",
+            projects=[ProjectConfig(name="main", client_id="id1", client_secret="s1")],
+        )
+        token_path = tmp_path / "tokens" / "main.json"
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text('{"token": "test", "refresh_token": "rt"}')
+
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch("ytrix.projects.get_token_path", return_value=token_path),
+            patch(
+                "google.oauth2.credentials.Credentials.from_authorized_user_info",
+                return_value=mock_creds,
+            ),
+        ):
+            manager = ProjectManager(config)
+            result = manager.get_credentials()
+            assert result is mock_creds
+
+    def test_refreshes_expired_credentials(self, tmp_path: Path) -> None:
+        """Refreshes credentials when expired."""
+        config = Config(
+            channel_id="UC123",
+            projects=[ProjectConfig(name="main", client_id="id1", client_secret="s1")],
+        )
+        token_path = tmp_path / "tokens" / "main.json"
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text('{"token": "test", "refresh_token": "rt"}')
+
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "rt"
+        mock_creds.to_json.return_value = '{"token": "new"}'
+
+        mock_request = MagicMock()
+
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch("ytrix.projects.get_token_path", return_value=token_path),
+            patch(
+                "google.oauth2.credentials.Credentials.from_authorized_user_info",
+                return_value=mock_creds,
+            ),
+            patch("google.auth.transport.requests.Request", return_value=mock_request),
+        ):
+            manager = ProjectManager(config)
+            result = manager.get_credentials()
+            mock_creds.refresh.assert_called_once_with(mock_request)
+            assert result is mock_creds
+
+    def test_raises_on_failed_credentials(self, tmp_path: Path) -> None:
+        """Raises RuntimeError when credentials cannot be obtained."""
+        config = Config(
+            channel_id="UC123",
+            projects=[ProjectConfig(name="main", client_id="id1", client_secret="s1")],
+        )
+        token_path = tmp_path / "tokens" / "main.json"
+        # No token file exists
+
+        # Mock the OAuth flow to return None (simulating failure)
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = None
+
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch("ytrix.projects.get_token_path", return_value=token_path),
+            patch(
+                "google_auth_oauthlib.flow.InstalledAppFlow.from_client_config",
+                return_value=mock_flow,
+            ),
+        ):
+            manager = ProjectManager(config)
+            with pytest.raises(RuntimeError, match="Failed to obtain credentials"):
+                manager.get_credentials()
+
+
+class TestGetClient:
+    """Tests for ProjectManager.get_client method."""
+
+    def test_returns_cached_client(self, tmp_path: Path) -> None:
+        """Returns cached client on second call."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        mock_client = MagicMock()
+
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            manager._client = mock_client
+            result = manager.get_client()
+            assert result is mock_client
+
+    def test_builds_client_with_credentials(self, tmp_path: Path) -> None:
+        """Builds YouTube client with credentials."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+        mock_client = MagicMock()
+
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch.object(ProjectManager, "get_credentials", return_value=mock_creds),
+            patch("googleapiclient.discovery.build", return_value=mock_client) as mock_build,
+        ):
+            manager = ProjectManager(config)
+            result = manager.get_client()
+            mock_build.assert_called_once_with("youtube", "v3", credentials=mock_creds)
+            assert result is mock_client
