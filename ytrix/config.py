@@ -42,7 +42,7 @@ class ProjectConfig(BaseModel):  # type: ignore[misc]
     client_id: str
     client_secret: str
 
-    @field_validator("name")
+    @field_validator("name")  # type: ignore[untyped-decorator]
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Ensure project name is filesystem-safe."""

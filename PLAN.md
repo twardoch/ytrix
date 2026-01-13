@@ -262,14 +262,14 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 ### 9.4 GCP Project Cloning (gcptrix integration)
 
 - [x] Move gcptrix.py into ytrix/gcptrix.py
-- [ ] Add `gcp_clone <source> <suffix>` CLI command
-- [ ] Add `gcp_inventory <project>` CLI command
-- [ ] Document manual steps required after cloning
+- [x] Add `gcp_clone <source> <suffix>` CLI command
+- [x] Add `gcp_inventory <project>` CLI command
+- [x] Document manual steps required after cloning
 
 ### 9.5 CLI Commands - COMPLETE
 
 - [x] `projects`: Show configured projects and quota status
-- [ ] `projects_add <name>`: Interactive setup for new project
+- [x] `projects_add <name>`: Interactive setup for new project
 - [x] `projects_auth <name>`: Authenticate specific project
 - [x] `projects_select <name>`: Select active project
 

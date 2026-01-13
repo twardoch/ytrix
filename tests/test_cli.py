@@ -1562,3 +1562,70 @@ class TestProjectCommands:
         """projects_select command exists."""
         assert hasattr(YtrixCLI, "projects_select")
         assert callable(YtrixCLI.projects_select)
+
+    def test_projects_add_command_exists(self) -> None:
+        """projects_add command exists."""
+        assert hasattr(YtrixCLI, "projects_add")
+        assert callable(YtrixCLI.projects_add)
+
+
+class TestGcpCommands:
+    """Tests for GCP project management commands."""
+
+    def test_gcp_clone_command_exists(self) -> None:
+        """gcp_clone command exists."""
+        assert hasattr(YtrixCLI, "gcp_clone")
+        assert callable(YtrixCLI.gcp_clone)
+
+    def test_gcp_inventory_command_exists(self) -> None:
+        """gcp_inventory command exists."""
+        assert hasattr(YtrixCLI, "gcp_inventory")
+        assert callable(YtrixCLI.gcp_inventory)
+
+    def test_gcp_clone_requires_gcloud(self) -> None:
+        """gcp_clone fails gracefully when gcloud is not installed."""
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+            patch("ytrix.gcptrix.check_gcloud_installed", return_value=False),
+        ):
+            cli = YtrixCLI()
+            result = cli.gcp_clone("test-project", "2")
+        assert result is None
+
+    def test_gcp_inventory_requires_gcloud(self) -> None:
+        """gcp_inventory fails gracefully when gcloud is not installed."""
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+            patch("ytrix.gcptrix.check_gcloud_installed", return_value=False),
+        ):
+            cli = YtrixCLI()
+            result = cli.gcp_inventory("test-project")
+        assert result is None
+
+    def test_gcp_clone_json_output_on_missing_gcloud(self) -> None:
+        """gcp_clone returns JSON error when gcloud missing and --json-output."""
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+            patch("ytrix.gcptrix.check_gcloud_installed", return_value=False),
+        ):
+            cli = YtrixCLI(json_output=True)
+            result = cli.gcp_clone("test-project", "2")
+        assert result is not None
+        assert result["success"] is False
+        assert "gcloud" in result["error"].lower()
+
+    def test_gcp_inventory_json_output_on_missing_gcloud(self) -> None:
+        """gcp_inventory returns JSON error when gcloud missing and --json-output."""
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+            patch("ytrix.gcptrix.check_gcloud_installed", return_value=False),
+        ):
+            cli = YtrixCLI(json_output=True)
+            result = cli.gcp_inventory("test-project")
+        assert result is not None
+        assert result["success"] is False
+        assert "gcloud" in result["error"].lower()

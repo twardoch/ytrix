@@ -181,6 +181,9 @@ def get_credentials(config: Config) -> Credentials:
             creds.refresh(Request())
         else:
             # Create client config from our config
+            if config.oauth is None:
+                msg = "No OAuth credentials configured. Add [oauth] section to config.toml"
+                raise ValueError(msg)
             client_config = {
                 "installed": {
                     "client_id": config.oauth.client_id,
@@ -207,7 +210,7 @@ def get_youtube_client(config: Config) -> Resource:
     return build("youtube", "v3", credentials=creds)
 
 
-@api_retry
+@api_retry  # type: ignore[untyped-decorator]
 def create_playlist(
     client: Resource, title: str, description: str = "", privacy: str = "public"
 ) -> str:
@@ -223,7 +226,7 @@ def create_playlist(
     return playlist_id
 
 
-@api_retry
+@api_retry  # type: ignore[untyped-decorator]
 def update_playlist(
     client: Resource,
     playlist_id: str,
@@ -253,7 +256,7 @@ def update_playlist(
     record_quota("playlists.update")  # update call
 
 
-@api_retry
+@api_retry  # type: ignore[untyped-decorator]
 def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
     """Add video to playlist and return playlistItem ID. (50 quota units)"""
     _throttler.wait()
@@ -269,7 +272,7 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
     return item_id
 
 
-@api_retry
+@api_retry  # type: ignore[untyped-decorator]
 def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     """Remove video from playlist by playlistItem ID. (50 quota units)"""
     _throttler.wait()

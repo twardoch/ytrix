@@ -31,7 +31,7 @@ def _extract_info(url: str, flat: bool = True, max_retries: int = 5) -> dict[str
                 if info is None:
                     raise RuntimeError(f"yt-dlp returned no info for {url}")
             _ytdlp_throttler.on_success()
-            return info
+            return dict(info)
         except Exception as e:
             is_rate_limit = _is_rate_limit_error(e)
             _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)

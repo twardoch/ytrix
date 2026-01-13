@@ -1,5 +1,6 @@
 """ytrix CLI - YouTube playlist management."""
 
+import contextlib
 import json
 from collections import defaultdict
 from importlib import resources
@@ -59,6 +60,7 @@ class YtrixCLI:
         """
         configure_logging(verbose)
         self._json = json_output
+        self._verbose = verbose
         self._project = project
         # Set API throttle delay
         api.set_throttle_delay(throttle)
@@ -216,7 +218,7 @@ class YtrixCLI:
         reset_time = quota.get_time_until_reset()
 
         if self._json:
-            output = dict(summary)
+            output: dict[str, Any] = dict(summary)
             output["reset_in"] = reset_time
             return self._output(output)
 
@@ -224,7 +226,7 @@ class YtrixCLI:
         remaining = summary["remaining"]
         limit = summary["limit"]
         pct = summary["usage_percent"]
-        ops = summary.get("operations", {})
+        ops: dict[str, int] = summary.get("operations", {})  # type: ignore[assignment]
 
         console.print("[bold]Session Quota Usage[/bold]")
         console.print(f"  Used: {used:,} / {limit:,} units ({pct:.1f}%)")
@@ -234,9 +236,9 @@ class YtrixCLI:
         if ops:
             console.print()
             console.print("[bold]Operations this session:[/bold]")
-            for op, count in sorted(ops.items()):  # type: ignore[union-attr]
+            for op, count in sorted(ops.items()):
                 unit_cost = quota.QUOTA_COSTS.get(op, 50)
-                total_cost = count * unit_cost  # type: ignore[operator]
+                total_cost = int(count) * unit_cost
                 console.print(f"  {op}: {count} x {unit_cost} = {total_cost:,} units")
 
         warning = quota.get_tracker().check_and_warn()
@@ -365,6 +367,413 @@ class YtrixCLI:
                     }
                 )
             console.print(f"[red]{e}[/red]")
+
+        return None
+
+    def gcp_clone(
+        self,
+        source_project: str,
+        suffix: str,
+        dry_run: bool = False,
+        skip_labels: bool = False,
+        skip_service_accounts: bool = False,
+    ) -> dict[str, Any] | None:
+        """Clone a Google Cloud project for YouTube API quota expansion.
+
+        Creates a new GCP project based on the source project, copying IAM policies,
+        enabled services, billing configuration, and custom service accounts.
+
+        Requires gcloud CLI installed and authenticated.
+
+        Args:
+            source_project: Source GCP project ID to clone
+            suffix: Suffix for new project (creates {source}-{suffix})
+            dry_run: Show what would be done without making changes
+            skip_labels: Skip copying project labels
+            skip_service_accounts: Skip cloning service accounts
+
+        Example:
+            ytrix gcp_clone my-youtube-project 2 --dry-run
+            ytrix gcp_clone ytrix-main backup
+        """
+        from ytrix import gcptrix
+
+        # Set output modes
+        if self._verbose:
+            gcptrix.set_verbose(True)
+
+        new_project_id = f"{source_project}-{suffix}"
+
+        if self._json:
+            gcptrix.set_quiet(True)
+
+        console.print("[bold]Cloning GCP project[/bold]")
+        console.print(f"  Source: {source_project}")
+        console.print(f"  Target: {new_project_id}")
+        if dry_run:
+            console.print("  [yellow]DRY RUN - no changes will be made[/yellow]")
+
+        # Check gcloud CLI
+        if not gcptrix.check_gcloud_installed():
+            msg = "gcloud CLI not found. Install from https://cloud.google.com/sdk/docs/install"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Check authentication
+        try:
+            auth_info = gcptrix.check_authentication()
+            console.print(f"  Authenticated as: {auth_info['account']}")
+        except gcptrix.AuthenticationError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]{e}[/red]")
+            console.print("Run 'gcloud auth login' to authenticate")
+            return None
+
+        # Check source project access
+        if not gcptrix.check_project_permissions(source_project, dry_run):
+            msg = f"Cannot access project: {source_project}"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Check if target exists
+        if gcptrix.project_exists(new_project_id, dry_run):
+            msg = f"Project already exists: {new_project_id}"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Get source project info
+        try:
+            project_info = gcptrix.get_project_info(source_project, dry_run)
+            parent = project_info.get("parent")
+        except gcptrix.GcloudError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]Failed to get project info: {e}[/red]")
+            return None
+
+        # Create project
+        try:
+            gcptrix.create_project(new_project_id, parent, dry_run)
+            if not dry_run:
+                console.print(f"[green]Created project: {new_project_id}[/green]")
+        except gcptrix.GcloudError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]Failed to create project: {e}[/red]")
+            return None
+
+        # Copy labels
+        if not skip_labels:
+            try:
+                labels = gcptrix.get_project_labels(source_project, dry_run)
+                if labels:
+                    gcptrix.set_project_labels(new_project_id, labels, dry_run)
+                    if not dry_run:
+                        console.print(f"  Copied {len(labels)} labels")
+            except gcptrix.GcloudError as e:
+                console.print(f"[yellow]Warning: Could not copy labels: {e}[/yellow]")
+
+        # Configure billing
+        try:
+            billing_info = gcptrix.get_billing_info(source_project, dry_run)
+            if billing_info.get("billingEnabled"):
+                billing_account = billing_info.get("billingAccountName", "").split("/")[-1]
+                if billing_account:
+                    gcptrix.link_billing(new_project_id, billing_account, dry_run)
+                    if not dry_run:
+                        console.print(f"  Linked billing account: {billing_account}")
+        except gcptrix.GcloudError as e:
+            console.print(f"[yellow]Warning: Could not configure billing: {e}[/yellow]")
+
+        # Enable services
+        try:
+            services = gcptrix.get_enabled_services(source_project, dry_run)
+            if services and not dry_run:
+                console.print(f"  Enabling {len(services)} services...")
+                for svc in services:
+                    with contextlib.suppress(gcptrix.GcloudError):
+                        gcptrix.enable_service(new_project_id, svc, dry_run)
+                console.print("  [green]Services enabled[/green]")
+        except gcptrix.GcloudError as e:
+            console.print(f"[yellow]Warning: Could not enable services: {e}[/yellow]")
+
+        # Clone service accounts
+        if not skip_service_accounts:
+            try:
+                sas = gcptrix.get_service_accounts(source_project, dry_run)
+                default_patterns = ["-compute@", "@cloudservices", "@cloudbuild", "@appspot"]
+                custom_sas = [
+                    sa
+                    for sa in sas
+                    if sa.get("email", "").endswith(".iam.gserviceaccount.com")
+                    and not any(p in sa.get("email", "") for p in default_patterns)
+                ]
+                if custom_sas and not dry_run:
+                    for sa in custom_sas:
+                        email = sa.get("email", "")
+                        account_id = email.split("@")[0]
+                        display_name = sa.get("displayName", account_id)
+                        with contextlib.suppress(gcptrix.GcloudError):
+                            gcptrix.create_service_account(
+                                new_project_id, account_id, display_name, dry_run
+                            )
+                    console.print(f"  Created {len(custom_sas)} service accounts")
+            except gcptrix.GcloudError as e:
+                console.print(f"[yellow]Warning: Could not clone SAs: {e}[/yellow]")
+
+        if self._json:
+            return self._output(
+                {
+                    "success": True,
+                    "source_project": source_project,
+                    "new_project": new_project_id,
+                    "dry_run": dry_run,
+                }
+            )
+
+        console.print(f"\n[green]Clone complete: {new_project_id}[/green]")
+        console.print(
+            f"Console: https://console.cloud.google.com/home/dashboard?project={new_project_id}"
+        )
+        console.print("\n[yellow]Manual steps required:[/yellow]")
+        console.print("  - Create OAuth credentials in the new project")
+        console.print("  - Add new project to ~/.ytrix/config.toml [[projects]] section")
+        console.print("  - Run 'ytrix projects_auth <name>' to authenticate")
+
+        return None
+
+    def gcp_inventory(self, project_id: str) -> dict[str, Any] | None:
+        """Show inventory of resources in a GCP project.
+
+        Displays project info, labels, billing, service accounts, and enabled services.
+        Useful for understanding what a project contains before cloning.
+
+        Requires gcloud CLI installed and authenticated.
+
+        Args:
+            project_id: GCP project ID to inspect
+
+        Example:
+            ytrix gcp_inventory my-youtube-project
+        """
+        from ytrix import gcptrix
+
+        if self._verbose:
+            gcptrix.set_verbose(True)
+
+        # Check gcloud CLI
+        if not gcptrix.check_gcloud_installed():
+            msg = "gcloud CLI not found. Install from https://cloud.google.com/sdk/docs/install"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Check authentication
+        try:
+            auth_info = gcptrix.check_authentication()
+        except gcptrix.AuthenticationError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]{e}[/red]")
+            return None
+
+        # Check project access
+        if not gcptrix.check_project_permissions(project_id):
+            msg = f"Cannot access project: {project_id}"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Gather inventory data
+        inventory: dict[str, Any] = {"project_id": project_id}
+
+        try:
+            info = gcptrix.get_project_info(project_id)
+            inventory["project_number"] = info.get("projectNumber")
+            inventory["name"] = info.get("name")
+            inventory["parent"] = info.get("parent")
+        except gcptrix.GcloudError:
+            pass
+
+        try:
+            inventory["labels"] = gcptrix.get_project_labels(project_id)
+        except gcptrix.GcloudError:
+            inventory["labels"] = {}
+
+        try:
+            billing = gcptrix.get_billing_info(project_id)
+            inventory["billing_enabled"] = billing.get("billingEnabled", False)
+            inventory["billing_account"] = billing.get("billingAccountName", "").split("/")[-1]
+        except gcptrix.GcloudError:
+            inventory["billing_enabled"] = False
+
+        try:
+            sas = gcptrix.get_service_accounts(project_id)
+            inventory["service_accounts"] = [sa.get("email") for sa in sas]
+        except gcptrix.GcloudError:
+            inventory["service_accounts"] = []
+
+        try:
+            inventory["enabled_services"] = gcptrix.get_enabled_services(project_id)
+        except gcptrix.GcloudError:
+            inventory["enabled_services"] = []
+
+        if self._json:
+            return self._output({"success": True, **inventory})
+
+        # Display inventory
+        console.print(f"\n[bold]Project Inventory: {project_id}[/bold]")
+        console.print(f"  Authenticated as: {auth_info['account']}")
+        console.print()
+        console.print("[bold]Project Info[/bold]")
+        console.print(f"  ID:     {project_id}")
+        console.print(f"  Number: {inventory.get('project_number', 'N/A')}")
+        console.print(f"  Name:   {inventory.get('name', 'N/A')}")
+        if inventory.get("parent"):
+            p = inventory["parent"]
+            console.print(f"  Parent: {p.get('type')} ({p.get('id')})")
+
+        console.print()
+        console.print("[bold]Labels[/bold]")
+        labels = inventory.get("labels", {})
+        if labels:
+            for k, v in labels.items():
+                console.print(f"  {k}: {v}")
+        else:
+            console.print("  (none)")
+
+        console.print()
+        console.print("[bold]Billing[/bold]")
+        if inventory.get("billing_enabled"):
+            console.print(f"  Account: {inventory.get('billing_account')}")
+        else:
+            console.print("  Not enabled")
+
+        console.print()
+        console.print("[bold]Service Accounts[/bold]")
+        sas = inventory.get("service_accounts", [])
+        if sas:
+            for sa in sas:
+                console.print(f"  {sa}")
+        else:
+            console.print("  (none)")
+
+        console.print()
+        console.print("[bold]Enabled Services[/bold]")
+        services = inventory.get("enabled_services", [])
+        if services:
+            for svc in sorted(services):
+                console.print(f"  {svc}")
+            console.print(f"  Total: {len(services)}")
+        else:
+            console.print("  (none)")
+
+        return None
+
+    def projects_add(self, name: str) -> dict[str, Any] | None:
+        """Add a new GCP project to ytrix configuration.
+
+        Guides through adding a new project by prompting for OAuth client ID
+        and client secret. After adding, run 'projects_auth <name>' to authenticate.
+
+        Args:
+            name: Name for the new project (used in config)
+
+        Example:
+            ytrix projects_add backup
+            ytrix projects_add secondary
+        """
+        import tomllib
+
+        config_dir = get_config_dir()
+        config_file = config_dir / "config.toml"
+
+        # Check if config exists
+        if not config_file.exists():
+            msg = f"Config file not found: {config_file}"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            console.print("Run a command first to create the default config")
+            return None
+
+        # Load existing config
+        with open(config_file, "rb") as f:
+            config_data = tomllib.load(f)
+
+        # Check if project name already exists
+        existing_projects = config_data.get("projects", [])
+        for proj in existing_projects:
+            if proj.get("name") == name:
+                msg = f"Project '{name}' already exists in config"
+                if self._json:
+                    return self._output({"success": False, "error": msg})
+                console.print(f"[red]{msg}[/red]")
+                return None
+
+        console.print(f"[bold]Adding new project: {name}[/bold]")
+        console.print()
+        console.print("You need OAuth credentials from Google Cloud Console:")
+        console.print("  1. Go to https://console.cloud.google.com/apis/credentials")
+        console.print("  2. Create or select an OAuth 2.0 Client ID (Desktop app)")
+        console.print("  3. Copy the Client ID and Client Secret")
+        console.print()
+
+        # Prompt for credentials
+        try:
+            client_id = input("Client ID: ").strip()
+            if not client_id:
+                msg = "Client ID is required"
+                if self._json:
+                    return self._output({"success": False, "error": msg})
+                console.print(f"[red]{msg}[/red]")
+                return None
+
+            client_secret = input("Client Secret: ").strip()
+            if not client_secret:
+                msg = "Client Secret is required"
+                if self._json:
+                    return self._output({"success": False, "error": msg})
+                console.print(f"[red]{msg}[/red]")
+                return None
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled[/yellow]")
+            return None
+
+        # Read current config as text to preserve formatting
+        config_text = config_file.read_text()
+
+        # Build new project entry
+        new_project = f'''
+[[projects]]
+name = "{name}"
+client_id = "{client_id}"
+client_secret = "{client_secret}"
+'''
+
+        # Append to config
+        config_file.write_text(config_text.rstrip() + "\n" + new_project)
+
+        if self._json:
+            return self._output(
+                {
+                    "success": True,
+                    "name": name,
+                    "message": f"Project '{name}' added. Run 'ytrix projects_auth {name}'.",
+                }
+            )
+
+        console.print(f"\n[green]Project '{name}' added to config[/green]")
+        console.print(f"Next step: ytrix projects_auth {name}")
 
         return None
 
@@ -530,26 +939,26 @@ class YtrixCLI:
             return None
 
         # Fetch video counts if requested (uses yt-dlp to avoid API quota)
-        video_counts: dict[str, int] = {}
+        my_video_counts: dict[str, int] = {}
         if count and playlists:
             if not self._json:
                 console.print("[blue]Fetching video counts...[/blue]")
             for p in playlists:
                 try:
                     # Try yt-dlp first (no API quota)
-                    video_counts[p.id] = extractor.get_video_count(p.id)
+                    my_video_counts[p.id] = extractor.get_video_count(p.id)
                 except Exception:
                     # Fall back to API for private playlists
                     videos = api.get_playlist_videos(client, p.id)
-                    video_counts[p.id] = len(videos)
+                    my_video_counts[p.id] = len(videos)
 
         if self._json:
             playlist_data = []
             for p in playlists:
-                entry: dict[str, Any] = {"id": p.id, "title": p.title, "privacy": p.privacy}
+                pl_entry: dict[str, Any] = {"id": p.id, "title": p.title, "privacy": p.privacy}
                 if count:
-                    entry["video_count"] = video_counts.get(p.id, 0)
-                playlist_data.append(entry)
+                    pl_entry["video_count"] = my_video_counts.get(p.id, 0)
+                playlist_data.append(pl_entry)
             return self._output({"count": len(playlists), "playlists": playlist_data})
 
         if not playlists:
@@ -559,7 +968,7 @@ class YtrixCLI:
         console.print(f"Found {len(playlists)} playlists:\n")
         for p in playlists:
             privacy_tag = f" \\[{p.privacy}]" if p.privacy != "public" else ""
-            count_tag = f" ({video_counts[p.id]} videos)" if count else ""
+            count_tag = f" ({my_video_counts[p.id]} videos)" if count else ""
             console.print(f"  {p.title}{privacy_tag}{count_tag}")
             console.print(f"    [dim]https://youtube.com/playlist?list={p.id}[/dim]")
 
@@ -1138,8 +1547,8 @@ class YtrixCLI:
         source_by_id = {p.id: p for p in source_playlists}
 
         for task in pending_tasks:
-            source = source_by_id.get(task.source_playlist_id)
-            if not source:
+            source_playlist = source_by_id.get(task.source_playlist_id)
+            if not source_playlist:
                 continue
 
             update_task(journal, task.source_playlist_id, status=TaskStatus.IN_PROGRESS)
@@ -1148,11 +1557,11 @@ class YtrixCLI:
                 if task.match_type == "partial" and task.match_playlist_id:
                     # Update existing playlist - add missing videos
                     if not self._json:
-                        console.print(f"[blue]Updating: {source.title}[/blue]")
+                        console.print(f"[blue]Updating: {source_playlist.title}[/blue]")
                     target_id = task.match_playlist_id
                     existing_ids = extractor.get_playlist_video_ids(target_id)
                     added = 0
-                    for video in source.videos:
+                    for video in source_playlist.videos:
                         if video.id not in existing_ids:
                             try:
                                 api.add_video_to_playlist(client, target_id, video.id)
@@ -1174,13 +1583,17 @@ class YtrixCLI:
                 else:
                     # Create new playlist
                     if not self._json:
-                        console.print(f"[blue]Creating: {source.title}[/blue]")
-                    new_id = api.create_playlist(client, source.title, source.description)
+                        console.print(f"[blue]Creating: {source_playlist.title}[/blue]")
+                    new_id = api.create_playlist(
+                        client, source_playlist.title, source_playlist.description
+                    )
 
                     added = 0
                     with Progress(console=console, disable=self._json) as progress:
-                        prog_task = progress.add_task("Adding videos...", total=len(source.videos))
-                        for video in source.videos:
+                        prog_task = progress.add_task(
+                            "Adding videos...", total=len(source_playlist.videos)
+                        )
+                        for video in source_playlist.videos:
                             try:
                                 api.add_video_to_playlist(client, new_id, video.id)
                                 added += 1
@@ -1210,7 +1623,7 @@ class YtrixCLI:
                     increment_retry=True,
                 )
                 if not self._json:
-                    console.print(f"[red]Failed: {source.title} - {e}[/red]")
+                    console.print(f"[red]Failed: {source_playlist.title} - {e}[/red]")
                     console.print("[yellow]Use --resume to retry after quota resets[/yellow]")
 
         # Final summary

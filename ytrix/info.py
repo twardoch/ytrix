@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from yt_dlp import YoutubeDL
 
 from ytrix.logging import logger
@@ -86,7 +86,7 @@ class Throttler:
         """Get delay before retry attempt (exponential backoff with jitter)."""
         base = min(60, 2**attempt)  # 2, 4, 8, 16, 32, 60s
         jitter = random.uniform(0, base * 0.5)
-        return base + jitter
+        return float(base + jitter)
 
 
 # Global throttler for yt-dlp operations
