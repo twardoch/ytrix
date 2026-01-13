@@ -19,7 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- 362 tests total with Phase 9 additions
+- 369 tests total (7 new extractor tests for 99% coverage)
 
 ## [1.2.0] - 2026-01-13
 
