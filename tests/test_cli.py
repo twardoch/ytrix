@@ -1,6 +1,7 @@
 """Smoke tests for ytrix CLI commands."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1567,6 +1568,28 @@ class TestProjectCommands:
         """projects_add command exists."""
         assert hasattr(YtrixCLI, "projects_add")
         assert callable(YtrixCLI.projects_add)
+
+
+class TestHelpCommand:
+    """Tests for help command."""
+
+    def test_help_command_exists(self) -> None:
+        """help command exists."""
+        assert hasattr(YtrixCLI, "help")
+        assert callable(YtrixCLI.help)
+
+    def test_help_command_runs(self, capsys: Any) -> None:
+        """help command prints output."""
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+        ):
+            cli = YtrixCLI()
+            cli.help()
+        captured = capsys.readouterr()
+        assert "ytrix" in captured.out
+        assert "plist2mlist" in captured.out
+        assert "--help" in captured.out
 
 
 class TestGcpCommands:

@@ -96,6 +96,58 @@ class YtrixCLI:
         else:
             console.print(f"ytrix {__version__}", highlight=False)
 
+    def help(self) -> None:
+        """Show available commands and usage.
+
+        For detailed help on a specific command, use:
+            ytrix <command> --help
+
+        Example:
+            ytrix help
+            ytrix plist2mlist --help
+        """
+        console.print("[bold]ytrix[/bold] - YouTube playlist management\n")
+        console.print("[bold]Core Commands:[/bold]")
+        console.print("  plist2mlist    Copy external playlist to my channel")
+        console.print("  plists2mlist   Merge multiple playlists from file")
+        console.print("  plist2mlists   Split playlist by channel or year")
+        console.print("  plists2mlists  Batch copy playlists with journaling")
+        console.print()
+        console.print("[bold]YAML Operations:[/bold]")
+        console.print("  mlists2yaml    Export all my playlists to YAML")
+        console.print("  yaml2mlists    Apply YAML edits to my playlists")
+        console.print("  mlist2yaml     Export single playlist to YAML")
+        console.print("  yaml2mlist     Apply YAML edits to single playlist")
+        console.print()
+        console.print("[bold]Info & Listing:[/bold]")
+        console.print("  ls             List playlists on my channel")
+        console.print("  plist2info     Extract playlist info with transcripts")
+        console.print("  plists2info    Batch extract playlist info")
+        console.print()
+        console.print("[bold]Project Management:[/bold]")
+        console.print("  projects       Show configured GCP projects")
+        console.print("  projects_add   Add new project interactively")
+        console.print("  projects_auth  Authenticate a project")
+        console.print("  projects_select Select active project")
+        console.print("  gcp_clone      Clone GCP project for quota expansion")
+        console.print("  gcp_inventory  Show GCP project resources")
+        console.print()
+        console.print("[bold]Utilities:[/bold]")
+        console.print("  config         Show/setup configuration")
+        console.print("  quota_status   Show API quota usage")
+        console.print("  cache_stats    Show cache statistics")
+        console.print("  cache_clear    Clear cached data")
+        console.print("  journal_status Show batch operation status")
+        console.print("  version        Show version")
+        console.print()
+        console.print("[bold]Global Flags:[/bold]")
+        console.print("  --verbose      Enable debug logging")
+        console.print("  --json-output  Output as JSON")
+        console.print("  --throttle N   Milliseconds between API calls (default: 200)")
+        console.print("  --project NAME Use specific GCP project")
+        console.print()
+        console.print("For detailed help: [cyan]ytrix <command> --help[/cyan]")
+
     def config(self) -> dict[str, Any] | None:
         """Show configuration status and setup instructions.
 
@@ -638,9 +690,9 @@ class YtrixCLI:
         console.print(f"  ID:     {project_id}")
         console.print(f"  Number: {inventory.get('project_number', 'N/A')}")
         console.print(f"  Name:   {inventory.get('name', 'N/A')}")
-        if inventory.get("parent"):
-            p = inventory["parent"]
-            console.print(f"  Parent: {p.get('type')} ({p.get('id')})")
+        parent = inventory.get("parent")
+        if parent:
+            console.print(f"  Parent: {parent.get('type')} ({parent.get('id')})")
 
         console.print()
         console.print("[bold]Labels[/bold]")

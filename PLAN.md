@@ -281,8 +281,8 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 
 ## Success Criteria
 
-- [x] All 17 commands functional (14 core + plist2info + plists2info + quota_status)
-- [x] Tests pass with 80%+ coverage (369 tests)
+- [x] All 20 commands functional (core + info + quota + gcp + project management)
+- [x] Tests pass with 80%+ coverage (380 tests)
 - [x] Can round-trip: export to YAML, edit, import
 - [x] Handles 100+ video playlists
 - [x] Clear error messages for all failure modes
