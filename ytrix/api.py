@@ -1,6 +1,7 @@
 """YouTube API client with OAuth2 authentication."""
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,22 +25,139 @@ SCOPES = ["https://www.googleapis.com/auth/youtube"]
 console = Console(stderr=True)
 
 
-def _is_retryable_error(exc: BaseException) -> bool:
-    """Check if an HTTP error is retryable (rate limit, server error)."""
-    if isinstance(exc, HttpError):
-        status = exc.resp.status
-        # Retry on rate limit (429) and server errors (5xx)
-        if status == 429 or status >= 500:
-            logger.warning("API error {} (will retry): {}", status, exc.reason)
-            return True
+class QuotaExceededError(Exception):
+    """Raised when daily quota is exceeded (403 quotaExceeded).
+
+    Unlike rate limits (429), quota exceeded cannot be retried until midnight PT.
+    """
+
+    pass
+
+
+class Throttler:
+    """Enforces minimum delay between API write operations.
+
+    This helps avoid 429 RATE_LIMIT_EXCEEDED errors by pacing requests.
+
+    Usage:
+        throttler = Throttler(delay_ms=200)
+        throttler.wait()  # Call before each API write operation
+    """
+
+    def __init__(self, delay_ms: int = 200) -> None:
+        """Initialize throttler.
+
+        Args:
+            delay_ms: Minimum milliseconds between calls (default: 200ms)
+        """
+        self._delay_ms = delay_ms
+        self._last_call: float = 0.0
+
+    @property
+    def delay_ms(self) -> int:
+        """Current delay in milliseconds."""
+        return self._delay_ms
+
+    @delay_ms.setter
+    def delay_ms(self, value: int) -> None:
+        """Set delay in milliseconds."""
+        self._delay_ms = max(0, value)
+
+    def wait(self) -> None:
+        """Wait if needed to maintain minimum delay between calls."""
+        if self._delay_ms <= 0:
+            return
+
+        now = time.monotonic()
+        elapsed_ms = (now - self._last_call) * 1000
+
+        if elapsed_ms < self._delay_ms:
+            sleep_ms = self._delay_ms - elapsed_ms
+            time.sleep(sleep_ms / 1000)
+
+        self._last_call = time.monotonic()
+
+    def increase_delay(self, factor: float = 2.0, max_ms: int = 5000) -> None:
+        """Increase delay (e.g., after hitting rate limit)."""
+        self._delay_ms = min(int(self._delay_ms * factor), max_ms)
+        logger.warning("Increased throttle delay to {}ms", self._delay_ms)
+
+    def reset_delay(self, default_ms: int = 200) -> None:
+        """Reset delay to default."""
+        self._delay_ms = default_ms
+
+
+# Global throttler instance (can be configured via set_throttle_delay)
+_throttler = Throttler(delay_ms=200)
+
+
+def set_throttle_delay(delay_ms: int) -> None:
+    """Set the global throttle delay for API write operations.
+
+    Args:
+        delay_ms: Minimum milliseconds between API calls (0 to disable)
+    """
+    _throttler.delay_ms = delay_ms
+    logger.debug("Throttle delay set to {}ms", delay_ms)
+
+
+def get_throttle_delay() -> int:
+    """Get current throttle delay in milliseconds."""
+    return _throttler.delay_ms
+
+
+def _is_quota_exceeded(exc: HttpError) -> bool:
+    """Check if error is daily quota exceeded (403 quotaExceeded)."""
+    if exc.resp.status == 403:
+        try:
+            error_content = json.loads(exc.content.decode("utf-8"))
+            errors = error_content.get("error", {}).get("errors", [])
+            for error in errors:
+                if error.get("reason") == "quotaExceeded":
+                    return True
+        except (json.JSONDecodeError, AttributeError):
+            pass
     return False
 
 
-# Retry decorator for API calls: 5 attempts, exponential backoff 1-60s with jitter
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Check if an HTTP error is retryable (rate limit, server error).
+
+    Returns True for:
+    - 429 RATE_LIMIT_EXCEEDED (per-minute rate limit, retryable)
+    - 5xx server errors (retryable)
+
+    Returns False for:
+    - 403 quotaExceeded (daily quota, NOT retryable until midnight PT)
+    - Other client errors (not retryable)
+    """
+    if isinstance(exc, HttpError):
+        status = exc.resp.status
+
+        # Check for daily quota exceeded (403 quotaExceeded) - NOT retryable
+        if _is_quota_exceeded(exc):
+            logger.error("Daily quota exceeded! Resets at midnight Pacific Time.")
+            return False
+
+        # Retry on rate limit (429) and server errors (5xx)
+        if status == 429:
+            logger.warning("Rate limit hit (429), will retry with backoff")
+            _throttler.increase_delay()  # Slow down future requests
+            return True
+
+        if status >= 500:
+            logger.warning("Server error {} (will retry): {}", status, exc.reason)
+            return True
+
+    return False
+
+
+# Retry decorator for API calls: 10 attempts, exponential backoff 2-300s with jitter
+# Increased from 5 attempts/60s max to handle sustained rate limits better
 api_retry = retry(
     retry=retry_if_exception(_is_retryable_error),
-    stop=stop_after_attempt(5),
-    wait=wait_exponential_jitter(initial=1, max=60, jitter=5),
+    stop=stop_after_attempt(10),
+    wait=wait_exponential_jitter(initial=2, max=300, jitter=5),
     reraise=True,
 )
 
@@ -87,11 +205,12 @@ def get_youtube_client(config: Config) -> Resource:
     return build("youtube", "v3", credentials=creds)
 
 
-@api_retry  # type: ignore[misc]  # type: ignore[misc]
+@api_retry  # type: ignore[misc]
 def create_playlist(
     client: Resource, title: str, description: str = "", privacy: str = "public"
 ) -> str:
     """Create a new playlist and return its ID. (50 quota units)"""
+    _throttler.wait()
     body = {
         "snippet": {"title": title, "description": description},
         "status": {"privacyStatus": privacy},
@@ -110,6 +229,7 @@ def update_playlist(
     privacy: str | None = None,
 ) -> None:
     """Update playlist metadata. (51 quota units: 1 list + 50 update)"""
+    _throttler.wait()
     # First get current data
     current = client.playlists().list(part="snippet,status", id=playlist_id).execute()
     if not current["items"]:
@@ -131,6 +251,7 @@ def update_playlist(
 @api_retry  # type: ignore[misc]
 def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
     """Add video to playlist and return playlistItem ID. (50 quota units)"""
+    _throttler.wait()
     body = {
         "snippet": {
             "playlistId": playlist_id,
@@ -145,6 +266,7 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
 @api_retry  # type: ignore[misc]
 def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     """Remove video from playlist by playlistItem ID. (50 quota units)"""
+    _throttler.wait()
     client.playlistItems().delete(id=playlist_item_id).execute()
 
 
@@ -271,7 +393,8 @@ def update_playlist_item_position(
     video_id: str,
     new_position: int,
 ) -> None:
-    """Move a playlist item to a new position."""
+    """Move a playlist item to a new position. (50 quota units)"""
+    _throttler.wait()
     body = {
         "id": item_id,
         "snippet": {

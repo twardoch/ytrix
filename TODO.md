@@ -1,5 +1,38 @@
 # ytrix TODO
 
+## In Progress (v1.2.0-dev) - Quota & Rate Limit Handling
+
+### Session Quota Tracking (quota.py)
+- [ ] Add `QuotaTracker` class for actual usage tracking
+- [ ] Warn at 80% quota consumed
+- [ ] Auto-pause when estimated to exceed quota
+
+### User Feedback
+- [ ] Show quota used/remaining after operations
+- [ ] Show time until midnight PT reset on quota errors
+- [ ] Suggest `--throttle` or `--resume` on failures
+
+## Completed (v1.2.0-dev)
+
+### Request Throttling (api.py)
+- [x] Add `Throttler` class with configurable delay (default 200ms)
+- [x] Apply throttling to write operations (create, update, delete)
+- [x] Add `--throttle` CLI flag for custom delay
+
+### Improved Retry Strategy (api.py)
+- [x] Increase max retry attempts for 429 (5 → 10)
+- [x] Increase max backoff time (60s → 300s)
+- [x] Distinguish 429 RATE_LIMIT_EXCEEDED from 403 quotaExceeded
+- [x] Stop immediately on 403 quotaExceeded (no retry)
+
+### Adaptive Pacing
+- [x] Start with normal pacing (200ms)
+- [x] Double delay on 429, exponential up to 5s
+
+### Testing
+- [x] Test throttler with mock time
+- [x] Test 429 vs 403 handling
+
 ## Completed (v1.1.0-dev)
 
 ### Build & Version

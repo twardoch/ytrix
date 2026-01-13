@@ -37,18 +37,29 @@ class YtrixCLI:
         ytrix plist2mlist "https://youtube.com/playlist?list=PLxxx"
         ytrix --verbose mlists2yaml --details
         ytrix --json-output plist2mlist PLxxx
+        ytrix --throttle 500 plists2mlists playlists.txt  # Slower API calls
     """
 
-    def __init__(self, verbose: bool = False, json_output: bool = False) -> None:
+    def __init__(
+        self, verbose: bool = False, json_output: bool = False, throttle: int = 200
+    ) -> None:
         """Initialize CLI with options.
 
         Args:
             verbose: Enable debug logging
             json_output: Output results as JSON instead of human-readable text
+            throttle: Milliseconds between API write calls (default 200, 0 to disable)
         """
         configure_logging(verbose)
         self._json = json_output
-        logger.debug("ytrix initialized with verbose={}, json={}", verbose, json_output)
+        # Set API throttle delay
+        api.set_throttle_delay(throttle)
+        logger.debug(
+            "ytrix initialized with verbose={}, json={}, throttle={}ms",
+            verbose,
+            json_output,
+            throttle,
+        )
 
     def _output(self, data: dict[str, Any]) -> dict[str, Any] | None:
         """Output result as JSON or print nothing (human output already printed)."""

@@ -90,15 +90,56 @@ def mock_client():
 @pytest.fixture
 def cli():
     """Create CLI instance without verbose."""
-    with patch("ytrix.__main__.configure_logging"):
+    with patch("ytrix.__main__.configure_logging"), patch("ytrix.__main__.api.set_throttle_delay"):
         return YtrixCLI(verbose=False)
 
 
 @pytest.fixture
 def cli_json():
     """Create CLI instance with JSON output."""
-    with patch("ytrix.__main__.configure_logging"):
+    with patch("ytrix.__main__.configure_logging"), patch("ytrix.__main__.api.set_throttle_delay"):
         return YtrixCLI(verbose=False, json_output=True)
+
+
+class TestThrottleFlag:
+    """Tests for --throttle CLI flag."""
+
+    def test_throttle_default_value(self) -> None:
+        """Default throttle is 200ms."""
+        from ytrix import api
+
+        original = api.get_throttle_delay()
+        try:
+            with patch("ytrix.__main__.configure_logging"):
+                YtrixCLI(verbose=False)
+            # Should have set to default 200
+            assert api.get_throttle_delay() == 200
+        finally:
+            api.set_throttle_delay(original)
+
+    def test_throttle_custom_value(self) -> None:
+        """Custom throttle value is applied."""
+        from ytrix import api
+
+        original = api.get_throttle_delay()
+        try:
+            with patch("ytrix.__main__.configure_logging"):
+                YtrixCLI(verbose=False, throttle=500)
+            assert api.get_throttle_delay() == 500
+        finally:
+            api.set_throttle_delay(original)
+
+    def test_throttle_zero_disables(self) -> None:
+        """Throttle of 0 disables throttling."""
+        from ytrix import api
+
+        original = api.get_throttle_delay()
+        try:
+            with patch("ytrix.__main__.configure_logging"):
+                YtrixCLI(verbose=False, throttle=0)
+            assert api.get_throttle_delay() == 0
+        finally:
+            api.set_throttle_delay(original)
 
 
 class TestVersion:

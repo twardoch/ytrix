@@ -16,16 +16,23 @@ All notable changes to this project will be documented in this file.
 - `plist2mlist --title` flag for custom playlist titles
 - `plist2mlist --privacy` flag (public, unlisted, private)
 - `plists2mlist --privacy` flag (public, unlisted, private)
+- **Request throttling**: `--throttle` flag to set delay between API writes (default 200ms)
+  - Helps avoid 429 rate limit errors on batch operations
+  - Set to 0 to disable throttling
 
 ### Changed
 
 - Version is now derived from git tags (e.g., `v1.1.0`)
-- Updated test count to 228
+- Updated test count to 247
 - Added type ignore comments for tenacity decorators (mypy compatibility)
 - **API quota optimization**: Read operations now use yt-dlp first, falling back to API only for private playlists
   - `ls --count`: Uses yt-dlp for video counts (saves ~1 quota unit per playlist)
   - `mlists2yaml --details`: Uses yt-dlp for video lists
   - `mlist2yaml`: Uses yt-dlp for video lists, API only for metadata (privacy status)
+- **Improved retry strategy**: 10 attempts with up to 300s backoff (was 5/60s)
+  - 429 rate limits: Retried with exponential backoff, auto-increases throttle delay
+  - 403 quotaExceeded: Stops immediately (daily quota, no retry possible)
+  - 5xx server errors: Retried with backoff
 
 ## [1.0.0] - 2026-01-12
 
