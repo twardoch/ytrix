@@ -11,6 +11,49 @@ from ytrix.__main__ import YtrixCLI
 from ytrix.models import Playlist, Video
 
 
+class TestCLIEntryPoint:
+    """Smoke tests for CLI entry point."""
+
+    def test_cli_runs_without_args(self) -> None:
+        """CLI shows help when run without arguments."""
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "-m", "ytrix"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        # Fire shows usage info (exit 0) when no command given
+        assert "ytrix" in result.stdout.lower() or "synopsis" in result.stdout.lower()
+
+    def test_cli_version_command(self) -> None:
+        """version command shows version."""
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "-m", "ytrix", "version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        # Should contain version number
+        assert "ytrix" in result.stdout.lower() or "0." in result.stdout
+
+    def test_cli_help_command(self) -> None:
+        """help command shows command list."""
+        import subprocess
+
+        result = subprocess.run(
+            ["uv", "run", "python", "-m", "ytrix", "help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        # Should list commands
+        assert "plist2mlist" in result.stdout
+
+
 class TestCLICommands:
     """Smoke tests for CLI command existence."""
 
@@ -18,6 +61,7 @@ class TestCLICommands:
         """All expected commands exist on CLI class."""
         expected = [
             "version",
+            "help",
             "config",
             "ls",
             "plist2mlist",
