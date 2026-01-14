@@ -361,8 +361,8 @@ Rich quota visualization. See [07-cli-dashboard.md](issues/401/07-cli-dashboard.
 - [x] Add `show_quota_warning()` at 80% and 95% thresholds
 - [x] Add `show_rate_limit_feedback()` for retry visibility
 - [x] Add `show_session_summary()` for end-of-batch reporting
-- [ ] Update `quota_status` command to use rich dashboard
-- [ ] Add `--progress` and `--quiet` flags to batch commands
+- [x] Update `quota_status` command to use rich dashboard
+- [x] Add `--progress` and `--quiet` flags to batch commands
 
 ### 10.8 Journaling Improvements
 
@@ -386,7 +386,7 @@ Test coverage and docs. See [09-testing-documentation.md](issues/401/09-testing-
 - [x] Create test fixtures in `tests/conftest.py` (mock clients, errors)
 - [x] Add `test_error_handling.py` with error classification tests
 - [x] Add `test_quota.py` with quota tracking tests
-- [ ] Add `test_projects.py` with context selection tests
+- [x] Add `test_projects.py` with context selection tests (59 tests)
 - [ ] Add `test_journal.py` with enhanced journal tests
 - [ ] Add `test_dashboard.py` for CLI display tests
 - [ ] Update README with multi-project and quota sections

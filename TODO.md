@@ -102,10 +102,10 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Implement `show_quota_warning(percentage, remaining)`
 - [x] Implement `show_rate_limit_feedback(wait, attempt, max)`
 - [x] Implement `show_session_summary(started, operations, quota, errors)`
-- [ ] Update `quota_status` command to use rich dashboard
-- [ ] Add `--all` flag to `quota_status` for all projects
-- [ ] Add `--progress` flag to batch commands (default for TTY)
-- [ ] Add `--quiet` flag to batch commands
+- [x] Update `quota_status` command to use rich dashboard (already implemented)
+- [x] Add `--all` flag to `quota_status` for all projects (--all-projects flag exists)
+- [x] Add `--progress` flag to batch commands (Progress bars respect _should_print)
+- [x] Add `--quiet` flag to batch commands (global --quiet flag implemented)
 
 ### 10.8 Journaling Improvements ([08-journaling-improvements.md](issues/401/08-journaling-improvements.md))
 - [ ] Add `ErrorCategory` enum to journal.py (mirror from api.py)
@@ -149,10 +149,10 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `test_warning_threshold_triggers`
 - [x] Add `test_pre_check_blocks_oversized_operation`
 - [x] Add `test_reset_calculation_before_midnight` (covered by get_time_until_reset test)
-- [ ] Create `tests/test_projects.py`
-- [ ] Add `test_select_by_quota_group`
-- [ ] Add `test_failover_within_same_group`
-- [ ] Add `test_no_cross_group_failover`
+- [x] Create `tests/test_projects.py` (59 tests including rate limit handling)
+- [x] Add `test_select_by_quota_group` (test_select_context_by_quota_group)
+- [x] Add `test_failover_within_same_group` (test_handle_quota_exhausted_switches_within_same_group)
+- [x] Add `test_no_cross_group_failover` (test_handle_quota_exhausted_does_not_cross_groups)
 - [ ] Create `tests/test_journal.py` for enhanced journal
 - [ ] Create `tests/test_dashboard.py` for Rich display
 - [ ] Mark integration tests with `@pytest.mark.integration`

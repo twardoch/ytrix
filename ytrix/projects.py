@@ -13,24 +13,72 @@ circumvent quota limits for a single purpose violates Google ToS.
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from ytrix.config import Config, ProjectConfig, get_config_dir, get_token_path
 from ytrix.logging import logger
 from ytrix.quota import DAILY_QUOTA_LIMIT
 
-if TYPE_CHECKING:
-    from typing import Any
+
+def get_api_proxy_url() -> str | None:
+    """Get proxy URL for API calls from environment variables.
+
+    Uses the same Webshare rotating proxy config as yt-dlp.
+    """
+    user = os.getenv("WEBSHARE_PROXY_USER")
+    password = os.getenv("WEBSHARE_PROXY_PASS")
+    host = os.getenv("WEBSHARE_DOMAIN_NAME")
+    port = os.getenv("WEBSHARE_PROXY_PORT")
+
+    if not all([user, password, host, port]):
+        return None
+
+    return f"http://{user}:{password}@{host}:{port}"
+
+
+def _create_proxied_http() -> Any:
+    """Create an httplib2.Http object with proxy support if configured.
+
+    Returns:
+        httplib2.Http object, optionally configured with proxy.
+    """
+    import httplib2
+
+    proxy_url = get_api_proxy_url()
+    if not proxy_url:
+        return httplib2.Http(timeout=60)
+
+    # Use httplib2's built-in proxy_info_from_url for simpler parsing
+    proxy_info = httplib2.proxy_info_from_url(proxy_url)
+
+    # Parse for logging only
+    parsed = urlparse(proxy_url)
+    logger.info(
+        "API proxy enabled: {}:{} (rotating IPs)",
+        parsed.hostname,
+        parsed.port,
+    )
+
+    return httplib2.Http(proxy_info=proxy_info, timeout=60)
+
 
 # YouTube API quota extension request form
 QUOTA_EXTENSION_URL = "https://support.google.com/youtube/contact/yt_api_form"
 
 # Pacific timezone for quota reset
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+
+# Rate limit cooldown duration in seconds (how long to avoid a rate-limited project)
+RATE_LIMIT_COOLDOWN_SECONDS = 60.0
+# Number of consecutive rate limits before marking project for cooldown
+RATE_LIMIT_THRESHOLD = 3
 
 
 @dataclass
@@ -42,6 +90,9 @@ class ProjectState:
     last_reset_date: str = ""  # YYYY-MM-DD in Pacific Time
     is_exhausted: bool = False
     last_error: str | None = None
+    # Rate limit tracking (not persisted - resets on restart)
+    rate_limit_hits: int = 0
+    rate_limit_cooldown_until: float = 0.0  # time.monotonic() value
 
     def to_dict(self) -> dict[str, str | int | bool | None]:
         """Convert to dict for JSON serialization."""
@@ -51,6 +102,7 @@ class ProjectState:
             "last_reset_date": self.last_reset_date,
             "is_exhausted": self.is_exhausted,
             "last_error": self.last_error,
+            # Note: rate_limit_hits and cooldown are NOT persisted (transient)
         }
 
     @classmethod
@@ -67,7 +119,29 @@ class ProjectState:
             last_reset_date=str(last_reset_date) if last_reset_date else "",
             is_exhausted=bool(is_exhausted) if is_exhausted else False,
             last_error=str(last_error) if isinstance(last_error, str) else None,
+            rate_limit_hits=0,
+            rate_limit_cooldown_until=0.0,
         )
+
+    def is_in_cooldown(self) -> bool:
+        """Check if project is in rate limit cooldown."""
+        return time.monotonic() < self.rate_limit_cooldown_until
+
+    def is_available(self) -> bool:
+        """Check if project is available (not exhausted and not in cooldown)."""
+        return not self.is_exhausted and not self.is_in_cooldown()
+
+    def reset_rate_limits(self) -> None:
+        """Reset rate limit counters (called after successful operation)."""
+        self.rate_limit_hits = 0
+
+    def record_rate_limit(self) -> bool:
+        """Record a rate limit hit. Returns True if threshold exceeded."""
+        self.rate_limit_hits += 1
+        if self.rate_limit_hits >= RATE_LIMIT_THRESHOLD:
+            self.rate_limit_cooldown_until = time.monotonic() + RATE_LIMIT_COOLDOWN_SECONDS
+            return True
+        return False
 
 
 @dataclass
@@ -273,6 +347,148 @@ class ProjectManager:
         logger.warning("rotate_on_quota_exceeded() is deprecated, use handle_quota_exhausted()")
         return self.handle_quota_exhausted()
 
+    def handle_rate_limited(self, project_name: str | None = None) -> bool:
+        """Handle rate limit (429) by potentially switching to another project.
+
+        Unlike quota exhaustion, rate limits are temporary. This method:
+        1. Records the rate limit hit for the project
+        2. If threshold exceeded, marks project for cooldown and switches
+        3. Otherwise, returns False (let retry handle it)
+
+        Args:
+            project_name: Name of rate-limited project (defaults to current).
+
+        Returns:
+            True if switched to another project (caller should get new client).
+            False if staying on current project (let retry/backoff handle it).
+        """
+        if project_name is None:
+            project_name = self.current_project.name
+
+        state = self._states.get(project_name)
+        if state is None:
+            return False
+
+        # Record the hit - returns True if threshold exceeded
+        threshold_exceeded = state.record_rate_limit()
+
+        if not threshold_exceeded:
+            logger.debug(
+                "Project '{}' rate limited ({}/{} hits)",
+                project_name,
+                state.rate_limit_hits,
+                RATE_LIMIT_THRESHOLD,
+            )
+            return False
+
+        logger.warning(
+            "Project '{}' exceeded rate limit threshold, entering cooldown for {}s",
+            project_name,
+            RATE_LIMIT_COOLDOWN_SECONDS,
+        )
+
+        # Clear cached client to force new connection (new proxy IP)
+        self._client = None
+        self._credentials = None
+
+        # Try to switch to another available project
+        current_project = self.config.get_project(project_name)
+        quota_group = current_project.quota_group
+        candidates = self._get_candidates(quota_group)
+
+        # Find available projects (not exhausted AND not in cooldown)
+        available = [
+            c
+            for c in candidates
+            if c.name != project_name
+            and self._states.get(c.name, ProjectState(name=c.name)).is_available()
+        ]
+
+        if not available:
+            logger.warning(
+                "No other projects available in quota_group '{}', "
+                "staying on '{}' (will retry with backoff)",
+                quota_group,
+                project_name,
+            )
+            return False
+
+        # Switch to next available project
+        next_project = available[0]
+        self._current_index = self.project_names.index(next_project.name)
+        logger.info(
+            "Switched to project '{}' due to rate limits on '{}'",
+            next_project.name,
+            project_name,
+        )
+        return True
+
+    def on_success(self) -> None:
+        """Call after successful API operation to reset rate limit counters."""
+        state = self.current_state
+        if state.rate_limit_hits > 0:
+            state.reset_rate_limits()
+            logger.debug("Reset rate limit counters for project '{}'", state.name)
+
+    def rotate_project(self) -> bool:
+        """Rotate to next available project for load distribution.
+
+        Use this for proactive round-robin distribution across projects.
+        Cycles through projects in order, wrapping around at the end.
+
+        Returns:
+            True if rotated to a different project.
+            False if no other projects available or only one project.
+        """
+        names = self.project_names
+        if len(names) <= 1:
+            return False
+
+        current_name = self.current_project.name
+        quota_group = self.current_project.quota_group
+
+        # Get names of available projects in same quota group
+        available_names = set()
+        for c in self._get_candidates(quota_group):
+            state = self._states.get(c.name, ProjectState(name=c.name))
+            if c.name != current_name and state.is_available():
+                available_names.add(c.name)
+
+        if not available_names:
+            return False
+
+        # True round-robin: start from current position and find next available
+        current_idx = names.index(current_name)
+        for i in range(1, len(names)):
+            next_idx = (current_idx + i) % len(names)
+            next_name = names[next_idx]
+            if next_name in available_names:
+                self._current_index = next_idx
+                self._client = None
+                self._credentials = None
+                logger.debug("Rotated to project '{}' (round-robin)", next_name)
+                return True
+
+        return False
+
+    def invalidate_client(self) -> None:
+        """Invalidate cached client to force recreation.
+
+        Call this to get a new HTTP connection (and potentially new proxy IP).
+        """
+        self._client = None
+        logger.debug("Invalidated client cache for project '{}'", self.current_project.name)
+
+    def get_available_project_count(self) -> int:
+        """Get count of available projects (not exhausted, not in cooldown)."""
+        quota_group = self.current_project.quota_group
+        candidates = self._get_candidates(quota_group)
+        return sum(
+            1
+            for c in candidates
+            if self._states.get(c.name, ProjectState(name=c.name)).is_available()
+        )
+
     def select_project(self, name: str) -> None:
         """Manually select a project by name.
 
@@ -406,15 +622,22 @@ class ProjectManager:
     def get_client(self) -> Any:
         """Get YouTube API client for current project.
 
+        Uses rotating proxy if configured via WEBSHARE_* environment variables.
         Caches client until project changes.
         """
         if self._client is not None:
             return self._client
 
+        import google_auth_httplib2
         from googleapiclient.discovery import build
 
         creds = self.get_credentials()
-        self._client = build("youtube", "v3", credentials=creds)
+
+        # Create proxied HTTP transport
+        http = _create_proxied_http()
+        authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http)
+
+        self._client = build("youtube", "v3", http=authed_http)
         return self._client
 
     def status_summary(self) -> list[dict[str, str | int | bool]]:

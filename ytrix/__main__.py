@@ -11,7 +11,7 @@ import fire
 from rich.console import Console
 from rich.progress import Progress
 
-from ytrix import __version__, api, cache, extractor, info, quota, yaml_ops
+from ytrix import __version__, api, cache, dashboard, extractor, info, quota, yaml_ops
 from ytrix.api import BatchAction, BatchOperationHandler, classify_error, display_error
 from ytrix.config import Config, get_config_dir, load_config
 from ytrix.dedup import MatchType, analyze_batch_deduplication, load_target_playlists_with_videos
@@ -47,6 +47,7 @@ class YtrixCLI:
         ytrix --json-output plist2mlist PLxxx
         ytrix --throttle 500 plists2mlists playlists.txt  # Slower API calls
         ytrix --project backup plist2mlist PLxxx  # Use specific project
+        ytrix --quiet plists2mlists playlists.txt  # Suppress non-essential output
     """
 
     def __init__(
@@ -56,6 +57,7 @@ class YtrixCLI:
         throttle: int = 200,
         project: str | None = None,
         quota_group: str | None = None,
+        quiet: bool = False,
     ) -> None:
         """Initialize CLI with options.
 
@@ -65,24 +67,33 @@ class YtrixCLI:
             throttle: Milliseconds between API write calls (default 200, 0 to disable)
             project: Force using a specific project for API calls (multi-project setup)
             quota_group: Restrict context switching to projects in this quota group
+            quiet: Suppress non-essential output (progress bars still shown)
         """
         configure_logging(verbose)
         self._json = json_output
         self._verbose = verbose
         self._project = project
         self._quota_group = quota_group
+        self._quiet = quiet
+        self._manager: Any = None  # ProjectManager, set by _get_youtube_client
         # Set API throttle delay
         api.set_throttle_delay(throttle)
         logger.debug(
-            "ytrix initialized with verbose={}, json={}, throttle={}ms, project={}, quota_group={}",
+            "ytrix: verbose={}, json={}, quiet={}, throttle={}ms, project={}, group={}",
             verbose,
             json_output,
+            quiet,
             throttle,
             project,
             quota_group,
         )
         # Show ToS reminder on first run after update
         self._check_tos_reminder()
+
+    @property
+    def _should_print(self) -> bool:
+        """Return True if human-readable output should be printed."""
+        return not self._json and not self._quiet
 
     def _output(self, data: dict[str, Any]) -> dict[str, Any] | None:
         """Output result as JSON or print nothing (human output already printed)."""
@@ -130,12 +141,15 @@ class YtrixCLI:
         console.print()
 
     def _get_youtube_client(self, config: Config) -> Any:
-        """Get YouTube API client, optionally using a specific project.
+        """Get YouTube API client, using ProjectManager for multi-project configs.
 
         If --project was specified, selects that project.
         If --quota-group was specified, selects from that group.
+        If multi-project config exists, uses ProjectManager for automatic rotation.
+        Falls back to legacy single-project mode only if no multi-project config.
         """
         manager = get_project_manager(config)
+        self._manager = manager  # Store for quota rotation in batch operations
 
         if self._project:
             manager.select_project(self._project)
@@ -145,6 +159,15 @@ class YtrixCLI:
             manager.select_context(quota_group=self._quota_group)
             return manager.get_client()
 
+        # Use ProjectManager for multi-project configs (enables auto-rotation)
+        if config.is_multi_project:
+            logger.debug(
+                "Using ProjectManager for multi-project config (project: {})",
+                manager.current_project.name,
+            )
+            return manager.get_client()
+
+        # Legacy single-project mode
         return api.get_youtube_client(config)
 
     def version(self) -> None:
@@ -315,15 +338,21 @@ class YtrixCLI:
         console.print(f"[green]{msg}[/green]")
         return None
 
-    def quota_status(self) -> dict[str, Any] | None:
-        """Show API quota usage for current session.
+    def quota_status(self, all_projects: bool = False) -> dict[str, Any] | None:
+        """Show API quota usage with rich dashboard.
 
-        Displays quota units consumed, remaining capacity, and time until reset.
+        Displays quota units consumed, remaining capacity, and time until reset
+        using a visual dashboard with progress bar.
+
+        Args:
+            all_projects: Show quota for all configured projects (default: False)
+
         Note: Only tracks usage within the current session; YouTube does not
         provide an API to query actual remaining quota.
 
         Example:
             ytrix quota_status
+            ytrix quota_status --all-projects
             ytrix --json-output quota_status
         """
         summary = quota.get_quota_summary()
@@ -334,25 +363,55 @@ class YtrixCLI:
             output["reset_in"] = reset_time
             return self._output(output)
 
-        used = summary["used"]
-        remaining = summary["remaining"]
-        limit = summary["limit"]
-        pct = summary["usage_percent"]
+        used = int(summary["used"])  # type: ignore[arg-type]
+        limit = int(summary["limit"])  # type: ignore[arg-type]
         ops: dict[str, int] = summary.get("operations", {})  # type: ignore[assignment]
 
-        console.print("[bold]Session Quota Usage[/bold]")
-        console.print(f"  Used: {used:,} / {limit:,} units ({pct:.1f}%)")
-        console.print(f"  Remaining: {remaining:,} units")
-        console.print(f"  Resets in: {reset_time} (midnight PT)")
+        # Get project context
+        config = load_config()
+        manager = get_project_manager(config)
+        try:
+            active = manager.current_project
+            project_name = active.name
+            quota_group = active.quota_group
+        except ValueError:
+            project_name = "default"
+            quota_group = "default"
 
-        if ops:
+        # Build operations dict for dashboard (name -> (count, units))
+        ops_with_units: dict[str, tuple[int, int]] = {}
+        for op, count in ops.items():
+            unit_cost = quota.QUOTA_COSTS.get(op, 50)
+            ops_with_units[op] = (count, count * unit_cost)
+
+        # Display rich dashboard
+        panel = dashboard.create_quota_dashboard(
+            project_name=project_name,
+            quota_group=quota_group,
+            used=used,
+            limit=limit,
+            operations=ops_with_units,
+        )
+        console.print(panel)
+
+        # Show operations table if any
+        if ops_with_units:
+            table = dashboard.create_operations_table(ops_with_units)
+            console.print(table)
+
+        # Show all projects if requested
+        if all_projects:
             console.print()
-            console.print("[bold]Operations this session:[/bold]")
-            for op, count in sorted(ops.items()):
-                unit_cost = quota.QUOTA_COSTS.get(op, 50)
-                total_cost = int(count) * unit_cost
-                console.print(f"  {op}: {count} x {unit_cost} = {total_cost:,} units")
+            proj_summary = manager.status_summary()
+            console.print("[bold]All Projects:[/bold]")
+            for proj in proj_summary:
+                marker = "[green]ACTIVE[/green]" if proj.get("current") else ""
+                console.print(
+                    f"  {proj['name']} ({proj.get('quota_group', 'default')}): "
+                    f"{proj.get('quota_used', 0):,} / {proj.get('quota_limit', 10000):,} {marker}"
+                )
 
+        # Show warning if needed
         warning = quota.get_tracker().check_and_warn()
         if warning:
             console.print()
@@ -1474,7 +1533,7 @@ priority = {priority}
                     except Exception as e:
                         skipped.append({"id": video.id, "error": str(e)})
             else:
-                with Progress(console=console) as progress:
+                with Progress(console=console, disable=(self._json or self._quiet)) as progress:
                     task = progress.add_task("Adding videos...", total=len(videos_to_add))
                     for video in videos_to_add:
                         try:
@@ -1519,7 +1578,7 @@ priority = {priority}
                 except Exception as e:
                     skipped.append({"id": video.id, "error": str(e)})
         else:
-            with Progress(console=console) as progress:
+            with Progress(console=console, disable=(self._json or self._quiet)) as progress:
                 task = progress.add_task("Adding videos...", total=len(source.videos))
                 for video in source.videos:
                     try:
@@ -1648,7 +1707,7 @@ priority = {priority}
                 except Exception:
                     pass
         else:
-            with Progress(console=console) as progress:
+            with Progress(console=console, disable=(self._json or self._quiet)) as progress:
                 task = progress.add_task("Adding videos...", total=len(unique_videos))
                 for video in unique_videos:
                     try:
@@ -1808,7 +1867,7 @@ priority = {priority}
             journal = load_journal()
             if journal:
                 summary = get_journal_summary(journal)
-                if not self._json:
+                if self._should_print:
                     console.print(f"[blue]Resuming batch: {journal.batch_id}[/blue]")
                     console.print(
                         f"  Completed: {summary['completed']}, "
@@ -1816,7 +1875,7 @@ priority = {priority}
                         f"Failed: {summary['failed']}"
                     )
             else:
-                if not self._json:
+                if self._should_print:
                     console.print("[yellow]No journal found, starting fresh[/yellow]")
 
         # Read source playlists from file if not resuming with existing journal
@@ -1826,7 +1885,7 @@ priority = {priority}
             if not lines:
                 raise ValueError("No playlist URLs found in file")
 
-            if not self._json:
+            if self._should_print:
                 console.print(f"[blue]Extracting {len(lines)} source playlists...[/blue]")
 
             source_playlists = []
@@ -1834,10 +1893,10 @@ priority = {priority}
                 try:
                     playlist = extractor.extract_playlist(line)
                     source_playlists.append(playlist)
-                    if not self._json:
+                    if self._should_print:
                         console.print(f"  {playlist.title}: {len(playlist.videos)} videos")
                 except Exception as e:
-                    if not self._json:
+                    if self._should_print:
                         console.print(f"[yellow]Skipped {line}: {e}[/yellow]")
 
             if not source_playlists:
@@ -1946,11 +2005,32 @@ priority = {priority}
                             try:
                                 api.add_video_to_playlist(client, target_id, video.id)
                                 added += 1
+                                if self._manager:
+                                    self._manager.on_success()  # Reset rate limit counters
                             except Exception as e:
                                 video_error = classify_error(e)
                                 if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
                                     raise  # Stop batch on quota exhaustion
-                                logger.warning("Failed to add {}: {}", video.id, e)
+                                # Try project rotation on rate limits
+                                if (
+                                    video_error.category == api.ErrorCategory.RATE_LIMITED
+                                    and self._manager is not None
+                                    and config.is_multi_project
+                                    and self._manager.handle_rate_limited()
+                                ):
+                                    client = self._manager.get_client()
+                                    if not self._json:
+                                        console.print(
+                                            "[yellow]Switched project (rate limit)[/yellow]"
+                                        )
+                                    # Retry adding this video with new client
+                                    try:
+                                        api.add_video_to_playlist(client, target_id, video.id)
+                                        added += 1
+                                    except Exception:
+                                        logger.warning("Retry failed for {}", video.id)
+                                else:
+                                    logger.warning("Failed to add {}: {}", video.id, e)
                     update_task(
                         journal,
                         task.source_playlist_id,
@@ -1959,6 +2039,8 @@ priority = {priority}
                         videos_added=added,
                     )
                     handler.on_success()
+                    if self._manager:
+                        self._manager.on_success()  # Reset rate limit counters
                     if not self._json:
                         console.print(
                             f"[green]Updated: https://youtube.com/playlist?list={target_id} "
@@ -1973,7 +2055,7 @@ priority = {priority}
                     )
 
                     added = 0
-                    with Progress(console=console, disable=self._json) as progress:
+                    with Progress(console=console, disable=(self._json or self._quiet)) as progress:
                         prog_task = progress.add_task(
                             "Adding videos...", total=len(source_playlist.videos)
                         )
@@ -1981,11 +2063,32 @@ priority = {priority}
                             try:
                                 api.add_video_to_playlist(client, new_id, video.id)
                                 added += 1
+                                if self._manager:
+                                    self._manager.on_success()  # Reset rate limit counters
                             except Exception as e:
                                 video_error = classify_error(e)
                                 if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
                                     raise  # Stop batch on quota exhaustion
-                                logger.warning("Failed to add {}: {}", video.id, e)
+                                # Try project rotation on rate limits during video adds
+                                if (
+                                    video_error.category == api.ErrorCategory.RATE_LIMITED
+                                    and self._manager is not None
+                                    and config.is_multi_project
+                                    and self._manager.handle_rate_limited()
+                                ):
+                                    client = self._manager.get_client()
+                                    if not self._json:
+                                        console.print(
+                                            "[yellow]Switched project (rate limit)[/yellow]"
+                                        )
+                                    # Retry adding this video with new client
+                                    try:
+                                        api.add_video_to_playlist(client, new_id, video.id)
+                                        added += 1
+                                    except Exception:
+                                        logger.warning("Retry failed for {}", video.id)
+                                else:
+                                    logger.warning("Failed to add {}: {}", video.id, e)
                             progress.advance(prog_task)
 
                     update_task(
@@ -1996,6 +2099,8 @@ priority = {priority}
                         videos_added=added,
                     )
                     handler.on_success()
+                    if self._manager:
+                        self._manager.on_success()  # Reset rate limit counters
                     if not self._json:
                         console.print(
                             f"[green]Created: https://youtube.com/playlist?list={new_id}[/green]"
@@ -2004,6 +2109,49 @@ priority = {priority}
             except Exception as e:
                 action = handler.handle_error(task.source_playlist_id, e)
                 api_error = classify_error(e)
+
+                # Try project rotation on quota exhaustion (multi-project mode)
+                can_rotate_quota = (
+                    api_error.category == api.ErrorCategory.QUOTA_EXCEEDED
+                    and self._manager is not None
+                    and config.is_multi_project
+                    and self._manager.handle_quota_exhausted()
+                )
+                if can_rotate_quota:
+                    # Successfully rotated to another project
+                    client = self._manager.get_client()
+                    project_name = self._manager.current_project.name
+                    if not self._json:
+                        console.print(
+                            f"[yellow]Switched to project '{project_name}' "
+                            f"(quota rotation)[/yellow]"
+                        )
+                    # Reset task status to pending so it can be retried
+                    update_task(journal, task.source_playlist_id, status=TaskStatus.PENDING)
+                    handler.consecutive_errors = 0  # Reset error count
+                    continue  # Retry with new project
+
+                # Try project rotation on persistent rate limits (multi-project mode)
+                can_rotate_rate = (
+                    api_error.category == api.ErrorCategory.RATE_LIMITED
+                    and self._manager is not None
+                    and config.is_multi_project
+                    and self._manager.handle_rate_limited()
+                )
+                if can_rotate_rate:
+                    # Successfully rotated to another project
+                    client = self._manager.get_client()
+                    project_name = self._manager.current_project.name
+                    if not self._json:
+                        console.print(
+                            f"[yellow]Switched to project '{project_name}' "
+                            f"(rate limit rotation)[/yellow]"
+                        )
+                    # Reset task status to pending so it can be retried
+                    update_task(journal, task.source_playlist_id, status=TaskStatus.PENDING)
+                    handler.consecutive_errors = 0  # Reset error count
+                    continue  # Retry with new project
+
                 update_task(
                     journal,
                     task.source_playlist_id,
@@ -2075,7 +2223,7 @@ priority = {priority}
                     except Exception:
                         playlist.videos = api.get_playlist_videos(client, playlist.id)
             else:
-                with Progress(console=console) as progress:
+                with Progress(console=console, disable=(self._json or self._quiet)) as progress:
                     task = progress.add_task("Fetching video details...", total=len(playlists))
                     for playlist in playlists:
                         try:

@@ -8,7 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ytrix.config import Config, OAuthConfig, ProjectConfig
-from ytrix.projects import ProjectManager, ProjectState, get_project_manager, reset_project_manager
+from ytrix.projects import (
+    ProjectManager,
+    ProjectState,
+    _create_proxied_http,
+    get_api_proxy_url,
+    get_project_manager,
+    reset_project_manager,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +24,66 @@ def reset_manager_between_tests() -> Generator[None, None, None]:
     reset_project_manager()
     yield
     reset_project_manager()
+
+
+class TestApiProxy:
+    """Tests for API proxy configuration."""
+
+    def test_get_api_proxy_url_when_all_vars_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns proxy URL when all environment variables are set."""
+        monkeypatch.setenv("WEBSHARE_PROXY_USER", "testuser")
+        monkeypatch.setenv("WEBSHARE_PROXY_PASS", "testpass")
+        monkeypatch.setenv("WEBSHARE_DOMAIN_NAME", "proxy.example.com")
+        monkeypatch.setenv("WEBSHARE_PROXY_PORT", "8080")
+
+        result = get_api_proxy_url()
+        assert result == "http://testuser:testpass@proxy.example.com:8080"
+
+    def test_get_api_proxy_url_when_vars_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns None when environment variables are not set."""
+        monkeypatch.delenv("WEBSHARE_PROXY_USER", raising=False)
+        monkeypatch.delenv("WEBSHARE_PROXY_PASS", raising=False)
+        monkeypatch.delenv("WEBSHARE_DOMAIN_NAME", raising=False)
+        monkeypatch.delenv("WEBSHARE_PROXY_PORT", raising=False)
+
+        result = get_api_proxy_url()
+        assert result is None
+
+    def test_get_api_proxy_url_when_partial_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns None when only some environment variables are set."""
+        monkeypatch.setenv("WEBSHARE_PROXY_USER", "testuser")
+        monkeypatch.delenv("WEBSHARE_PROXY_PASS", raising=False)
+        monkeypatch.setenv("WEBSHARE_DOMAIN_NAME", "proxy.example.com")
+        monkeypatch.setenv("WEBSHARE_PROXY_PORT", "8080")
+
+        result = get_api_proxy_url()
+        assert result is None
+
+    def test_create_proxied_http_without_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Creates httplib2.Http without proxy when vars not set."""
+        monkeypatch.delenv("WEBSHARE_PROXY_USER", raising=False)
+        monkeypatch.delenv("WEBSHARE_PROXY_PASS", raising=False)
+        monkeypatch.delenv("WEBSHARE_DOMAIN_NAME", raising=False)
+        monkeypatch.delenv("WEBSHARE_PROXY_PORT", raising=False)
+
+        http = _create_proxied_http()
+        assert http is not None
+        # Default httplib2 uses callable for env-based proxy detection
+        assert callable(http.proxy_info) or http.proxy_info is None
+
+    def test_create_proxied_http_with_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Creates httplib2.Http with proxy when vars are set."""
+        monkeypatch.setenv("WEBSHARE_PROXY_USER", "testuser")
+        monkeypatch.setenv("WEBSHARE_PROXY_PASS", "testpass")
+        monkeypatch.setenv("WEBSHARE_DOMAIN_NAME", "proxy.example.com")
+        monkeypatch.setenv("WEBSHARE_PROXY_PORT", "8080")
+
+        http = _create_proxied_http()
+        assert http is not None
+        # Proxy should be a ProxyInfo object (not callable)
+        assert not callable(http.proxy_info)
+        assert http.proxy_info.proxy_host == "proxy.example.com"
+        assert http.proxy_info.proxy_port == 8080
 
 
 class TestProjectState:
@@ -518,7 +585,7 @@ class TestGetClient:
             assert result is mock_client
 
     def test_builds_client_with_credentials(self, tmp_path: Path) -> None:
-        """Builds YouTube client with credentials."""
+        """Builds YouTube client with proxied HTTP transport."""
         config = Config(
             channel_id="UC123",
             oauth=OAuthConfig(client_id="id", client_secret="s"),
@@ -526,15 +593,19 @@ class TestGetClient:
         mock_creds = MagicMock()
         mock_creds.valid = True
         mock_client = MagicMock()
+        mock_http = MagicMock()
+        mock_authed_http = MagicMock()
 
         with (
             patch("ytrix.projects.get_config_dir", return_value=tmp_path),
             patch.object(ProjectManager, "get_credentials", return_value=mock_creds),
+            patch("ytrix.projects._create_proxied_http", return_value=mock_http),
+            patch("google_auth_httplib2.AuthorizedHttp", return_value=mock_authed_http),
             patch("googleapiclient.discovery.build", return_value=mock_client) as mock_build,
         ):
             manager = ProjectManager(config)
             result = manager.get_client()
-            mock_build.assert_called_once_with("youtube", "v3", credentials=mock_creds)
+            mock_build.assert_called_once_with("youtube", "v3", http=mock_authed_http)
             assert result is mock_client
 
 
@@ -701,3 +772,245 @@ class TestQuotaGroupHandling:
             success = manager.rotate_on_quota_exceeded()
             assert success is True
             assert manager.current_project.name == "personal-2"
+
+
+class TestRateLimitHandling:
+    """Tests for rate limit handling and project rotation on 429 errors."""
+
+    @pytest.fixture
+    def multi_project_config(self) -> Config:
+        """Create a multi-project config for rate limit tests."""
+        return Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(name="proj-1", client_id="id1", client_secret="s1"),
+                ProjectConfig(name="proj-2", client_id="id2", client_secret="s2"),
+                ProjectConfig(name="proj-3", client_id="id3", client_secret="s3"),
+            ],
+        )
+
+    def test_project_state_rate_limit_tracking(self) -> None:
+        """ProjectState tracks rate limit hits."""
+        state = ProjectState(name="test")
+        assert state.rate_limit_hits == 0
+        assert not state.is_in_cooldown()
+        assert state.is_available()
+
+        # First two hits don't exceed threshold
+        assert not state.record_rate_limit()
+        assert state.rate_limit_hits == 1
+        assert not state.record_rate_limit()
+        assert state.rate_limit_hits == 2
+
+        # Third hit exceeds threshold (default is 3)
+        assert state.record_rate_limit()
+        assert state.rate_limit_hits == 3
+        assert state.is_in_cooldown()
+        assert not state.is_available()
+
+    def test_project_state_reset_rate_limits(self) -> None:
+        """reset_rate_limits clears rate limit counters."""
+        state = ProjectState(name="test")
+        state.rate_limit_hits = 5
+        state.reset_rate_limits()
+        assert state.rate_limit_hits == 0
+
+    def test_handle_rate_limited_below_threshold(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """handle_rate_limited returns False when below threshold."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+
+            # First few rate limits don't trigger switch
+            result = manager.handle_rate_limited()
+            assert result is False
+            assert manager.current_project.name == "proj-1"
+
+            result = manager.handle_rate_limited()
+            assert result is False
+            assert manager.current_project.name == "proj-1"
+
+    def test_handle_rate_limited_exceeds_threshold_switches_project(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """handle_rate_limited switches project when threshold exceeded."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+
+            # Hit rate limit threshold (default 3)
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+            result = manager.handle_rate_limited()
+
+            assert result is True
+            assert manager.current_project.name == "proj-2"
+
+    def test_handle_rate_limited_clears_client_cache(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """handle_rate_limited clears cached client for new connection."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+            manager._client = MagicMock()
+
+            # Exceed threshold
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+
+            assert manager._client is None
+
+    def test_handle_rate_limited_stays_in_same_quota_group(
+        self, tmp_path: Path
+    ) -> None:
+        """handle_rate_limited only switches within same quota_group."""
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(name="group-a-1", client_id="id1", client_secret="s1", quota_group="a"),
+                ProjectConfig(name="group-b-1", client_id="id2", client_secret="s2", quota_group="b"),
+                ProjectConfig(name="group-a-2", client_id="id3", client_secret="s3", quota_group="a"),
+            ],
+        )
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            manager.select_project("group-a-1")
+
+            # Exceed threshold
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+
+            # Should switch to group-a-2, not group-b-1
+            assert manager.current_project.name == "group-a-2"
+            assert manager.current_project.quota_group == "a"
+
+    def test_handle_rate_limited_returns_false_when_all_in_cooldown(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """handle_rate_limited returns False when all projects are unavailable."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+
+            # Put all projects in cooldown
+            for name in ["proj-1", "proj-2", "proj-3"]:
+                manager.select_project(name)
+                manager.handle_rate_limited()
+                manager.handle_rate_limited()
+                manager.handle_rate_limited()
+
+            # Now try again - should return False
+            result = manager.handle_rate_limited()
+            assert result is False
+
+    def test_on_success_resets_rate_limit_counters(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """on_success resets rate limit hit counter."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+
+            # Accumulate some rate limit hits
+            manager.handle_rate_limited()
+            manager.handle_rate_limited()
+            assert manager.current_state.rate_limit_hits == 2
+
+            # Success resets counter
+            manager.on_success()
+            assert manager.current_state.rate_limit_hits == 0
+
+    def test_rotate_project_round_robin(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """rotate_project does round-robin rotation."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+            assert manager.current_project.name == "proj-1"
+
+            result = manager.rotate_project()
+            assert result is True
+            assert manager.current_project.name == "proj-2"
+
+            result = manager.rotate_project()
+            assert result is True
+            assert manager.current_project.name == "proj-3"
+
+    def test_rotate_project_skips_unavailable(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """rotate_project skips exhausted/cooldown projects."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+
+            # Exhaust proj-2
+            manager.select_project("proj-2")
+            manager.mark_exhausted()
+            manager.select_project("proj-1")
+
+            # Rotate should skip proj-2
+            result = manager.rotate_project()
+            assert result is True
+            assert manager.current_project.name == "proj-3"
+
+    def test_rotate_project_returns_false_with_single_project(
+        self, tmp_path: Path
+    ) -> None:
+        """rotate_project returns False when only one project."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(config)
+            result = manager.rotate_project()
+            assert result is False
+
+    def test_invalidate_client_clears_cache(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """invalidate_client clears the cached client."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+            manager._client = MagicMock()
+
+            manager.invalidate_client()
+            assert manager._client is None
+
+    def test_get_available_project_count(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """get_available_project_count returns correct count."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_project_config)
+            assert manager.get_available_project_count() == 3
+
+            # Exhaust one
+            manager.mark_exhausted()
+            assert manager.get_available_project_count() == 2
+
+    def test_cooldown_expires_after_timeout(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """Rate limit cooldown expires after timeout."""
+        import time
+
+        from ytrix.projects import RATE_LIMIT_COOLDOWN_SECONDS
+
+        with (
+            patch("ytrix.projects.get_config_dir", return_value=tmp_path),
+            patch("ytrix.projects.RATE_LIMIT_COOLDOWN_SECONDS", 0.1),  # 100ms for test
+        ):
+            manager = ProjectManager(multi_project_config)
+
+            # Trigger cooldown
+            state = manager.current_state
+            state.rate_limit_cooldown_until = time.monotonic() + 0.1
+
+            assert state.is_in_cooldown()
+            assert not state.is_available()
+
+            # Wait for cooldown to expire
+            time.sleep(0.15)
+            assert not state.is_in_cooldown()
+            assert state.is_available()
