@@ -11,7 +11,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception,
     stop_after_attempt,
@@ -38,6 +41,14 @@ class ErrorCategory(Enum):
     SERVER_ERROR = auto()  # 5xx - retry with backoff
     NETWORK_ERROR = auto()  # Connection errors - retry with backoff
     UNKNOWN = auto()  # Unexpected errors - log and decide based on context
+
+
+class BatchAction(Enum):
+    """Actions for batch operation error handling."""
+
+    CONTINUE = auto()  # Continue with next item
+    SKIP_CURRENT = auto()  # Skip current item, continue batch
+    STOP_ALL = auto()  # Stop entire batch
 
 
 @dataclass
@@ -171,6 +182,171 @@ def classify_error(exc: BaseException) -> APIError:
     )
 
 
+# Color mapping for error categories
+_ERROR_COLORS: dict[ErrorCategory, str] = {
+    ErrorCategory.RATE_LIMITED: "yellow",
+    ErrorCategory.QUOTA_EXCEEDED: "red",
+    ErrorCategory.NOT_FOUND: "dim",
+    ErrorCategory.PERMISSION_DENIED: "red",
+    ErrorCategory.INVALID_REQUEST: "yellow",
+    ErrorCategory.SERVER_ERROR: "yellow",
+    ErrorCategory.NETWORK_ERROR: "yellow",
+    ErrorCategory.UNKNOWN: "red",
+}
+
+
+def display_error(error: APIError, show_action: bool = True) -> None:
+    """Display an API error with a Rich panel.
+
+    Args:
+        error: The APIError to display
+        show_action: Whether to show the user action hint (default: True)
+    """
+    color = _ERROR_COLORS.get(error.category, "red")
+    title = f"[bold {color}]{error.category.name}[/bold {color}]"
+
+    content = Text()
+    content.append(error.message, style=color)
+
+    if show_action and error.user_action:
+        content.append("\n\n")
+        content.append("→ ", style="dim")
+        content.append(error.user_action, style="dim italic")
+
+    if error.retryable:
+        content.append("\n")
+        content.append("(will retry automatically)", style="dim")
+
+    panel = Panel(content, title=title, border_style=color, padding=(0, 1))
+    console.print(panel)
+
+
+def _log_retry_attempt(retry_state: RetryCallState) -> None:
+    """Log retry attempts with user-friendly messages.
+
+    Used as a `before_sleep` callback for tenacity retry decorator.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if exc is None:
+        return
+
+    attempt = retry_state.attempt_number
+    next_wait = retry_state.next_action.sleep if retry_state.next_action else 0
+
+    api_error = classify_error(exc)
+    color = _ERROR_COLORS.get(api_error.category, "yellow")
+
+    # Format wait time nicely
+    wait_str = f"{next_wait / 60:.1f}m" if next_wait >= 60 else f"{next_wait:.0f}s"
+
+    msg = f"[{color}]Retry {attempt}[/{color}]: {api_error.message} → waiting {wait_str}"
+    console.print(msg)
+
+
+class BatchOperationHandler:
+    """Handle errors during batch operations with graceful recovery.
+
+    Tracks consecutive errors and determines whether to continue, skip, or stop
+    the batch based on error types.
+
+    Usage:
+        handler = BatchOperationHandler()
+        for task in tasks:
+            try:
+                process(task)
+                handler.on_success()
+            except Exception as e:
+                action = handler.handle_error(task.id, e)
+                if action == BatchAction.STOP_ALL:
+                    break
+                elif action == BatchAction.SKIP_CURRENT:
+                    continue
+    """
+
+    def __init__(self, max_consecutive_errors: int = 3) -> None:
+        """Initialize handler.
+
+        Args:
+            max_consecutive_errors: Stop batch after this many errors in a row
+        """
+        self.max_consecutive_errors = max_consecutive_errors
+        self.consecutive_errors = 0
+        self.total_errors = 0
+        self.last_error: APIError | None = None
+
+    def on_success(self) -> None:
+        """Call after successful operation to reset consecutive error counter."""
+        self.consecutive_errors = 0
+
+    def handle_error(self, task_id: str, exc: BaseException) -> BatchAction:
+        """Determine action for batch operation error.
+
+        Args:
+            task_id: Identifier for the current task (for logging)
+            exc: The exception that occurred
+
+        Returns:
+            BatchAction indicating how to proceed
+        """
+        api_error = classify_error(exc)
+        self.last_error = api_error
+        self.total_errors += 1
+        self.consecutive_errors += 1
+
+        # Quota exceeded: must stop, cannot continue
+        if api_error.category == ErrorCategory.QUOTA_EXCEEDED:
+            self._show_pause_message(api_error, "Quota exhausted")
+            return BatchAction.STOP_ALL
+
+        # Rate limited after retries exhausted: stop to avoid further issues
+        if api_error.category == ErrorCategory.RATE_LIMITED:
+            if self.consecutive_errors >= self.max_consecutive_errors:
+                self._show_pause_message(api_error, "Rate limits persisting")
+                return BatchAction.STOP_ALL
+            logger.warning("Task {} rate limited, skipping", task_id)
+            return BatchAction.SKIP_CURRENT
+
+        # Not found / invalid: skip this item, continue batch
+        if api_error.category in (ErrorCategory.NOT_FOUND, ErrorCategory.INVALID_REQUEST):
+            logger.info("Task {} skipped: {}", task_id, api_error.message)
+            return BatchAction.SKIP_CURRENT
+
+        # Permission denied: skip but warn
+        if api_error.category == ErrorCategory.PERMISSION_DENIED:
+            logger.warning("Task {} permission denied: {}", task_id, api_error.message)
+            return BatchAction.SKIP_CURRENT
+
+        # Server/network errors after retries: check consecutive count
+        if self.consecutive_errors >= self.max_consecutive_errors:
+            self._show_pause_message(api_error, "Too many consecutive errors")
+            return BatchAction.STOP_ALL
+
+        logger.warning("Task {} failed: {}", task_id, api_error.message)
+        return BatchAction.SKIP_CURRENT
+
+    def _show_pause_message(self, error: APIError, reason: str) -> None:
+        """Display batch pause message to user."""
+        content = Text()
+        content.append(f"Reason: {reason}\n\n", style="yellow")
+        content.append(f"Error: {error.message}\n\n", style="dim")
+        content.append("To resume later: ", style="dim")
+        content.append("ytrix plists2mlists <file> --resume", style="bold")
+
+        panel = Panel(
+            content,
+            title="[yellow]Batch Operation Paused[/yellow]",
+            border_style="yellow",
+            padding=(0, 1),
+        )
+        console.print(panel)
+
+    def get_summary(self) -> str:
+        """Get summary of errors encountered."""
+        if self.total_errors == 0:
+            return "No errors"
+        return f"{self.total_errors} error(s), {self.consecutive_errors} consecutive"
+
+
 class QuotaExceededError(Exception):
     """Raised when daily quota is exceeded (403 quotaExceeded).
 
@@ -298,6 +474,7 @@ api_retry = retry(
     retry=retry_if_exception(_is_retryable_error),
     stop=stop_after_attempt(10),
     wait=wait_exponential_jitter(initial=2, max=300, jitter=5),
+    before_sleep=_log_retry_attempt,
     reraise=True,
 )
 

@@ -31,6 +31,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "loguru>=0.7.0",
     "tenacity>=8.2.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +73,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["SIM113"]  # as_completed doesn't work with enumerate
 
 [tool.mypy]
 python_version = "3.12"

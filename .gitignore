@@ -20,6 +20,9 @@ htmlcov/
 .DS_Store
 *.DS_Store
 
+# Environment secrets
+.env
+
 # Vendored dependencies (install via pip)
 external/
 example/ 

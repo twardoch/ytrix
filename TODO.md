@@ -1,5 +1,10 @@
 # ytrix TODO
 
+## Urgent
+
+- [ ] When downloading and a proxy turns out to be extremely slow, we should have some timeout and then we retry (Webshare endpoint will give us a different proxy)
+
+
 ## Phase 10: ToS-Compliant Architecture & UX Improvements
 
 Full specification: [issues/401/](issues/401/)
@@ -23,7 +28,7 @@ Full specification: [issues/401/](issues/401/)
 - [x] Audit `mlists2yaml` command - hybrid: API to list own, yt-dlp for video details
 - [x] Audit `yaml2mlists` command - API required for private playlist access
 - [x] Audit `ls` command - yt-dlp for --user, API for own (private access needed)
-- [ ] Implement `calculate_diff()` in yaml_ops.py for minimal writes
+- [x] Implement `calculate_diff()` in yaml_ops.py for minimal writes
 - [x] Add `sleep_interval` to yt-dlp options for bulk operations (YtdlpRateLimitConfig)
 
 Note: API reads are required for own private/unlisted playlists (yt-dlp can't access without login).
@@ -76,8 +81,8 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] JSON parsing integrated into classify_error (no separate helper needed)
 - [x] Update `_is_retryable_error()` to use `classify_error()`
 - [x] Remove retry for `ErrorCategory.QUOTA_EXCEEDED` (handled in classify_error)
-- [ ] Add `_log_retry_attempt()` callback for tenacity
-- [ ] Implement `display_error(error)` with Rich panels
+- [x] Add `_log_retry_attempt()` callback for tenacity
+- [x] Implement `display_error(error)` with Rich panels
 - [ ] Create `BatchOperationHandler` class
 - [ ] Implement `BatchAction` enum (CONTINUE, SKIP_CURRENT, STOP_ALL)
 - [ ] Add `handle_error()` method to BatchOperationHandler

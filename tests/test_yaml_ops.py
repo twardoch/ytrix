@@ -197,3 +197,116 @@ class TestDiffPlaylists:
         diff = diff_playlists(old, new)
         assert "videos_reordered" in diff
         assert diff["videos_reordered"] is True
+
+
+class TestCalculateDiff:
+    """Tests for calculate_diff with minimal operations."""
+
+    def test_no_changes_returns_empty_diff(self) -> None:
+        """Returns diff with no operations when playlists are identical."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(id="PL1", title="Test", description="Desc")
+        desired = Playlist(id="PL1", title="Test", description="Desc")
+        diff = calculate_diff(current, desired)
+        assert not diff.has_changes
+        assert diff.estimated_quota == 0
+
+    def test_metadata_change_detected(self) -> None:
+        """Detects title/description/privacy changes."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(id="PL1", title="Old", description="Old Desc", privacy="public")
+        desired = Playlist(id="PL1", title="New", description="New Desc", privacy="private")
+        diff = calculate_diff(current, desired)
+        assert diff.update_metadata == {
+            "title": "New",
+            "description": "New Desc",
+            "privacy": "private",
+        }
+        assert diff.estimated_quota == 51  # 1 list + 50 update
+
+    def test_video_removal_detected(self) -> None:
+        """Detects videos to remove."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[
+                Video(id="v1", title="V1", channel="Ch", position=0),
+                Video(id="v2", title="V2", channel="Ch", position=1),
+            ],
+        )
+        desired = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        diff = calculate_diff(current, desired)
+        assert diff.videos_to_remove == ["v2"]
+        assert diff.estimated_quota == 50  # 1 delete
+
+    def test_video_addition_detected(self) -> None:
+        """Detects videos to add with positions."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        desired = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[
+                Video(id="v1", title="V1", channel="Ch", position=0),
+                Video(id="v2", title="V2", channel="Ch", position=1),
+            ],
+        )
+        diff = calculate_diff(current, desired)
+        assert diff.videos_to_add == [("v2", 1)]
+        assert diff.estimated_quota == 50  # 1 insert
+
+    def test_reorder_uses_lcs_for_minimal_moves(self) -> None:
+        """Uses LCS to minimize move operations."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[
+                Video(id="A", title="A", channel="Ch", position=0),
+                Video(id="B", title="B", channel="Ch", position=1),
+                Video(id="C", title="C", channel="Ch", position=2),
+                Video(id="D", title="D", channel="Ch", position=3),
+            ],
+        )
+        desired = Playlist(
+            id="PL1",
+            title="Test",
+            videos=[
+                Video(id="A", title="A", channel="Ch", position=0),
+                Video(id="C", title="C", channel="Ch", position=1),
+                Video(id="B", title="B", channel="Ch", position=2),
+                Video(id="D", title="D", channel="Ch", position=3),
+            ],
+        )
+        diff = calculate_diff(current, desired)
+        # Only 1 video needs to move
+        assert len(diff.videos_to_move) == 1
+        assert diff.estimated_quota == 50  # 1 move
+
+    def test_operation_count_is_correct(self) -> None:
+        """operation_count sums all operations."""
+        from ytrix.yaml_ops import calculate_diff
+
+        current = Playlist(id="PL1", title="Old")
+        desired = Playlist(
+            id="PL1",
+            title="New",
+            videos=[Video(id="v1", title="V1", channel="Ch", position=0)],
+        )
+        diff = calculate_diff(current, desired)
+        # 1 metadata update + 1 video add = 2 operations
+        assert diff.operation_count == 2
