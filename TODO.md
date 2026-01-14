@@ -24,7 +24,7 @@ Full specification: [issues/401/](issues/401/)
 - [x] Audit `yaml2mlists` command - API required for private playlist access
 - [x] Audit `ls` command - yt-dlp for --user, API for own (private access needed)
 - [ ] Implement `calculate_diff()` in yaml_ops.py for minimal writes
-- [ ] Add `sleep_interval=1` to yt-dlp options for bulk operations
+- [x] Add `sleep_interval` to yt-dlp options for bulk operations (YtdlpRateLimitConfig)
 
 Note: API reads are required for own private/unlisted playlists (yt-dlp can't access without login).
 The hybrid approach is correct: yt-dlp for external reads, API for own playlist management.
@@ -42,7 +42,7 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [ ] Add `estimate_copy_cost()` function to quota.py
 - [ ] Add pre-flight quota check to `plist2mlist` command
 - [ ] Add pre-flight quota check to `plists2mlists` command
-- [ ] Search codebase for `search.list` and remove/deprecate
+- [x] Search codebase for `search.list` and remove/deprecate (none found)
 
 ### 10.4 Project Context Management ([04-project-context.md](issues/401/04-project-context.md))
 - [x] Create `select_context(quota_group, environment, force_project)` method
@@ -57,17 +57,17 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add quota increase URL to exhaustion message
 
 ### 10.5 GCP Setup Automation ([05-gcp-automation.md](issues/401/05-gcp-automation.md))
-- [ ] Create `ProjectSetupResult` dataclass in gcptrix.py
-- [ ] Implement `guide_oauth_setup(project_id, console)` function
-- [ ] Add deep link URL generation for OAuth consent screen
-- [ ] Add deep link URL generation for credentials page
+- [x] Implement `get_oauth_guide(project_id)` function with step-by-step instructions
+- [x] Add deep link URL generation for OAuth consent screen
+- [x] Add deep link URL generation for credentials page
+- [x] Implement `init_project()` to create new GCP project
+- [x] Add `gcp_init <project-name>` CLI command
+- [x] Enable YouTube Data API automatically during init
 - [ ] Add `Prompt.ask()` for client_id and client_secret entry
 - [ ] Implement `_update_config_with_project()` to auto-append to config.toml
-- [ ] Add `gcp_init <project-name>` CLI command
 - [ ] Add `--guide-oauth` flag to `gcp_clone` command
-- [ ] Implement `handle_clone_error()` with resolution steps
 - [ ] Add exponential backoff to IAM policy operations
-- [ ] Add `gcp_guide <project>` command to print setup instructions
+- [ ] Add `gcp_guide <project>` command to print setup instructions separately
 
 ### 10.6 Enhanced Error Handling ([06-error-handling.md](issues/401/06-error-handling.md))
 - [ ] Create `ErrorCategory` enum in api.py
