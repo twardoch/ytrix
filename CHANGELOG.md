@@ -16,10 +16,12 @@ All notable changes to this project will be documented in this file.
   - Automatic quota tracking with daily reset at midnight Pacific Time
   - State persistence in ~/.ytrix/quota_state.json
   - 47 new tests for config and projects modules
+- Quota exhaustion guidance now includes the YouTube API quota extension request form
 
 ### Changed
 
 - 369 tests total (7 new extractor tests for 99% coverage)
+- README multi-project guidance now emphasizes ToS-compliant context switching and quota extensions
 
 ## [1.2.0] - 2026-01-13
 

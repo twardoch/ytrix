@@ -22,6 +22,9 @@ from ytrix.quota import DAILY_QUOTA_LIMIT
 if TYPE_CHECKING:
     from typing import Any
 
+# YouTube API quota extension request form
+QUOTA_EXTENSION_URL = "https://support.google.com/youtube/contact/yt_api_form"
+
 # Pacific timezone for quota reset
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -194,34 +197,74 @@ class ProjectManager:
         logger.warning("Project '{}' quota exhausted", state.name)
         self._save_state()
 
-    def rotate_on_quota_exceeded(self) -> bool:
-        """Attempt to rotate to next available project.
+    def handle_quota_exhausted(self, project_name: str | None = None) -> bool:
+        """Handle quota exhaustion by switching to another project in same quota_group.
+
+        ToS Compliance: Only switches within the same quota_group to avoid
+        circumventing quota limits across unrelated projects (forbidden by
+        Google's ToS Section III.D.1.c).
+
+        Args:
+            project_name: Name of exhausted project (defaults to current).
 
         Returns:
-            True if rotation succeeded (new project available).
-            False if all projects are exhausted.
+            True if switch succeeded (another project available in same group).
+            False if all projects in the group are exhausted.
         """
+        if project_name is None:
+            project_name = self.current_project.name
+
         self.mark_exhausted()
 
         # Clear cached client/credentials
         self._client = None
         self._credentials = None
 
-        # Find next non-exhausted project
-        names = self.project_names
-        start_index = self._current_index
-        for _ in range(len(names)):
-            self._current_index = (self._current_index + 1) % len(names)
-            if self._current_index == start_index:
-                break  # Back to start, all exhausted
-            state = self._states.get(names[self._current_index])
-            if state and not state.is_exhausted:
-                logger.info("Rotated to project '{}'", names[self._current_index])
-                self._save_state()
-                return True
+        # Get current project's quota_group
+        current_project = self.config.get_project(project_name)
+        quota_group = current_project.quota_group
 
-        logger.error("All projects quota exhausted!")
-        return False
+        # Find candidates in same quota_group
+        candidates = self._get_candidates(quota_group)
+        available = [
+            c
+            for c in candidates
+            if not self._states.get(c.name, ProjectState(name=c.name)).is_exhausted
+        ]
+
+        # Exclude current project
+        available = [c for c in available if c.name != project_name]
+
+        if not available:
+            logger.error(
+                "All projects in quota_group '{}' exhausted! "
+                "Wait for quota reset at midnight PT, use a different quota_group, "
+                "or request more quota: {}",
+                quota_group,
+                QUOTA_EXTENSION_URL,
+            )
+            return False
+
+        # Select next available project (sorted by priority)
+        next_project = available[0]
+        self._current_index = self.project_names.index(next_project.name)
+        logger.info(
+            "Switched to project '{}' (same quota_group '{}')",
+            next_project.name,
+            quota_group,
+        )
+        self._save_state()
+        return True
+
+    def _get_candidates(self, quota_group: str) -> list[ProjectConfig]:
+        """Get projects in a quota group, sorted by priority."""
+        return self.config.get_projects_by_quota_group(quota_group)
+
+    # Backwards compatibility alias
+    def rotate_on_quota_exceeded(self) -> bool:
+        """Deprecated: Use handle_quota_exhausted() instead."""
+        logger.warning("rotate_on_quota_exceeded() is deprecated, use handle_quota_exhausted()")
+        return self.handle_quota_exhausted()
 
     def select_project(self, name: str) -> None:
         """Manually select a project by name.
@@ -243,6 +286,62 @@ class ProjectManager:
         self._credentials = None
         logger.info("Selected project '{}'", name)
         self._save_state()
+
+    def select_context(
+        self,
+        quota_group: str | None = None,
+        environment: str | None = None,
+        force_project: str | None = None,
+    ) -> ProjectConfig:
+        """Select project by quota_group and/or environment.
+
+        Args:
+            quota_group: Restrict to projects in this quota group.
+            environment: Restrict to projects with this environment.
+            force_project: If provided, select this project regardless of filters.
+
+        Returns:
+            The selected ProjectConfig.
+
+        Raises:
+            ValueError: If no matching project found.
+        """
+        if force_project:
+            self.select_project(force_project)
+            return self.current_project
+
+        candidates = list(self.config.projects) if self.config.projects else []
+
+        # Filter by quota_group
+        if quota_group:
+            candidates = [p for p in candidates if p.quota_group == quota_group]
+
+        # Filter by environment
+        if environment:
+            candidates = [p for p in candidates if p.environment == environment]
+
+        # Filter out exhausted projects
+        candidates = [
+            p
+            for p in candidates
+            if not self._states.get(p.name, ProjectState(name=p.name)).is_exhausted
+        ]
+
+        if not candidates:
+            filters = []
+            if quota_group:
+                filters.append(f"quota_group='{quota_group}'")
+            if environment:
+                filters.append(f"environment='{environment}'")
+            filter_str = " and ".join(filters) if filters else "any"
+            msg = f"No available projects matching {filter_str}"
+            raise ValueError(msg)
+
+        # Sort by priority and select first
+        candidates.sort(key=lambda p: p.priority)
+        selected = candidates[0]
+        self.select_project(selected.name)
+        return selected
 
     def get_credentials(self) -> Any:
         """Get OAuth credentials for current project.
@@ -312,22 +411,30 @@ class ProjectManager:
         return self._client
 
     def status_summary(self) -> list[dict[str, str | int | bool]]:
-        """Get status summary for all projects."""
+        """Get status summary for all projects, grouped by quota_group."""
         self._check_quota_reset()
         result: list[dict[str, str | int | bool]] = []
         current_name = self.current_project.name
+
         for name in self.project_names:
             state = self._states.get(name, ProjectState(name=name))
+            project = self.config.get_project(name)
             result.append(
                 {
                     "name": name,
                     "current": name == current_name,
+                    "quota_group": project.quota_group,
+                    "environment": project.environment,
+                    "priority": project.priority,
                     "quota_used": state.quota_used,
                     "quota_remaining": max(0, DAILY_QUOTA_LIMIT - state.quota_used),
                     "quota_limit": DAILY_QUOTA_LIMIT,
                     "is_exhausted": state.is_exhausted,
                 }
             )
+
+        # Sort by quota_group, then priority
+        result.sort(key=lambda x: (str(x.get("quota_group", "")), int(x.get("priority", 0))))
         return result
 
 

@@ -279,6 +279,119 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - [x] README: Document project rotation
 - [x] Help text: Explain --project flag and rotation behavior
 
+## Phase 10: ToS-Compliant Architecture & UX Improvements
+
+**Full specification**: See [issues/401/](issues/401/) for detailed 9-part spec.
+
+### 10.1 ToS Compliance & Architecture Pivot
+
+**Critical finding**: Multi-project quota rotation for a single application is explicitly forbidden by Google's ToS (Section III.D.1.c). See [01-overview-compliance.md](issues/401/01-overview-compliance.md).
+
+- [ ] Rename "rotation" to "context switching" throughout codebase
+- [x] Add `quota_group` field to ProjectConfig for purpose-based grouping
+- [x] Restrict automatic project switching to within same quota_group
+- [x] Add ToS reminder on first run or after update
+- [x] Update README with multi-project guidance and ToS warnings
+- [x] Add validation to prevent obvious quota circumvention patterns
+
+### 10.2 Hybrid Read/Write Architecture
+
+Zero-quota reads via yt-dlp, API only for writes. See [02-hybrid-architecture.md](issues/401/02-hybrid-architecture.md).
+
+- [ ] Audit all commands to ensure reads use yt-dlp only
+- [ ] Deprecate or remove any API-based read functions
+- [ ] Implement diff-based writes for yaml2mlist (minimize API calls)
+- [ ] Add `--sleep-interval` to yt-dlp for bulk operations
+- [ ] Implement smart fallback: yt-dlp → API (with warning)
+
+### 10.3 Quota Optimization
+
+Batching, ETags, maxResults. See [03-quota-optimization.md](issues/401/03-quota-optimization.md).
+
+- [ ] Add `batch_video_metadata()` to api.py (up to 50 IDs per request)
+- [ ] Add ETag support to cache.py schema (new column)
+- [ ] Implement ETag conditional requests for playlist reads
+- [x] Audit all API calls for `maxResults=50`
+- [ ] Add pre-flight quota estimation to batch commands
+- [ ] Remove or deprecate any `search.list` usage
+
+### 10.4 Project Context Management
+
+ToS-compliant context switching. See [04-project-context.md](issues/401/04-project-context.md).
+
+- [x] Add `quota_group` and `environment` fields to ProjectConfig
+- [x] Replace `rotate_on_quota_exceeded()` with `handle_quota_exhausted()`
+- [x] Add `--quota-group` CLI flag
+- [x] Update `projects` command to show projects grouped by quota_group
+- [x] Add priority-based selection within quota groups
+
+### 10.5 GCP Setup Automation
+
+Guided OAuth setup. See [05-gcp-automation.md](issues/401/05-gcp-automation.md).
+
+- [ ] Add `ProjectSetupResult` dataclass
+- [ ] Implement `guide_oauth_setup()` with rich prompts and deep links
+- [ ] Add automatic config.toml update after credential entry
+- [ ] Improve error messages with resolution steps
+- [ ] Add exponential backoff for IAM operations during clone
+- [ ] Add `gcp_init` command for fresh project creation
+
+### 10.6 Enhanced Error Handling
+
+429 vs 403 distinction. See [06-error-handling.md](issues/401/06-error-handling.md).
+
+- [ ] Add `ErrorCategory` enum (RATE_LIMITED, QUOTA_EXCEEDED, PERMISSION_DENIED, etc.)
+- [ ] Add `APIError` dataclass with user_action field
+- [ ] Implement `classify_error()` function
+- [ ] Update `_is_retryable_error()` to use classify_error (no retry for quota)
+- [ ] Add `_log_retry_attempt()` with user-friendly messages
+- [ ] Implement `display_error()` with Rich panels
+- [ ] Add `BatchOperationHandler` for batch error recovery
+- [ ] Update all commands to use new error handling
+
+### 10.7 CLI Dashboard & Quota Display
+
+Rich quota visualization. See [07-cli-dashboard.md](issues/401/07-cli-dashboard.md).
+
+- [ ] Create `ytrix/dashboard.py` module
+- [ ] Add `get_time_until_reset()` function (midnight PT calculation)
+- [ ] Add `create_quota_dashboard()` with progress bar and stats table
+- [ ] Add `show_quota_warning()` at 80% and 95% thresholds
+- [ ] Add `show_rate_limit_feedback()` for retry visibility
+- [ ] Add `show_session_summary()` for end-of-batch reporting
+- [ ] Update `quota_status` command to use rich dashboard
+- [ ] Add `--progress` and `--quiet` flags to batch commands
+
+### 10.8 Journaling Improvements
+
+Enhanced resume and error tracking. See [08-journaling-improvements.md](issues/401/08-journaling-improvements.md).
+
+- [ ] Add `ErrorCategory` enum to journal.py
+- [ ] Add `TaskStatus.SKIPPED` for dedup scenarios
+- [ ] Create enhanced `JournalTask` dataclass with full context
+- [ ] Create `JournalBatch` dataclass for batch metadata
+- [ ] Implement `JournalManager` class with batch support
+- [ ] Add `get_batch_summary()` with ETA calculation
+- [ ] Add `cleanup_completed()` for stale entry removal
+- [ ] Add `--resume-batch` and `--skip-failed` flags to plists2mlists
+- [ ] Add `journal_status` CLI command
+- [ ] Add `journal_cleanup` CLI command
+
+### 10.9 Testing & Documentation
+
+Test coverage and docs. See [09-testing-documentation.md](issues/401/09-testing-documentation.md).
+
+- [ ] Create test fixtures in `tests/conftest.py` (mock clients, errors)
+- [ ] Add `test_error_handling.py` with error classification tests
+- [ ] Add `test_quota.py` with quota tracking tests
+- [ ] Add `test_projects.py` with context selection tests
+- [ ] Add `test_journal.py` with enhanced journal tests
+- [ ] Add `test_dashboard.py` for CLI display tests
+- [ ] Update README with multi-project and quota sections
+- [ ] Create `docs/errors.md` with error catalog
+- [ ] Update CHANGELOG.md with Phase 10 changes
+- [ ] Ensure 80%+ coverage for new modules
+
 ## Success Criteria
 
 - [x] All 20 commands functional (core + info + quota + gcp + project management)
@@ -291,3 +404,13 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - [x] Batch operations complete without 429 errors under normal load
 - [x] Graceful handling of quota limits with clear user guidance
 - [x] Multi-project credential rotation (Phase 9 complete)
+
+### Phase 10 Success Criteria
+
+- [ ] ToS-compliant project context switching (no quota circumvention)
+- [ ] 429 vs 403 errors handled distinctly (retry vs stop)
+- [ ] Rich quota dashboard with time-until-reset
+- [ ] Enhanced journaling with batch tracking and ETA
+- [ ] GCP setup guided with interactive prompts
+- [ ] API calls reduced 50%+ through batching and caching
+- [ ] 90%+ test coverage for new modules
