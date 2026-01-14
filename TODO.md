@@ -70,12 +70,12 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [ ] Add `gcp_guide <project>` command to print setup instructions separately
 
 ### 10.6 Enhanced Error Handling ([06-error-handling.md](issues/401/06-error-handling.md))
-- [ ] Create `ErrorCategory` enum in api.py
-- [ ] Create `APIError` dataclass with message, category, retryable, user_action
-- [ ] Implement `classify_error(exc)` function
-- [ ] Implement `_parse_error_content(exc)` helper for JSON parsing
-- [ ] Update `_should_retry()` to use `classify_error()`
-- [ ] Remove retry for `ErrorCategory.QUOTA_EXCEEDED`
+- [x] Create `ErrorCategory` enum in api.py
+- [x] Create `APIError` dataclass with message, category, retryable, user_action
+- [x] Implement `classify_error(exc)` function
+- [x] JSON parsing integrated into classify_error (no separate helper needed)
+- [x] Update `_is_retryable_error()` to use `classify_error()`
+- [x] Remove retry for `ErrorCategory.QUOTA_EXCEEDED` (handled in classify_error)
 - [ ] Add `_log_retry_attempt()` callback for tenacity
 - [ ] Implement `display_error(error)` with Rich panels
 - [ ] Create `BatchOperationHandler` class

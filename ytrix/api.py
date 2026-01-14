@@ -3,6 +3,7 @@
 import json
 import time
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 from google.oauth2.credentials import Credentials
@@ -24,6 +25,150 @@ from ytrix.quota import get_time_until_reset, record_quota
 
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 console = Console(stderr=True)
+
+
+class ErrorCategory(Enum):
+    """Categories for API errors to determine handling strategy."""
+
+    RATE_LIMITED = auto()  # 429 - retry with backoff
+    QUOTA_EXCEEDED = auto()  # 403 quotaExceeded - stop, wait until midnight PT
+    NOT_FOUND = auto()  # 404 - skip item, continue batch
+    PERMISSION_DENIED = auto()  # 403 (not quota) - skip item, continue
+    INVALID_REQUEST = auto()  # 400 - skip item, log error
+    SERVER_ERROR = auto()  # 5xx - retry with backoff
+    NETWORK_ERROR = auto()  # Connection errors - retry with backoff
+    UNKNOWN = auto()  # Unexpected errors - log and decide based on context
+
+
+@dataclass
+class APIError:
+    """Structured API error with handling guidance."""
+
+    category: ErrorCategory
+    message: str
+    retryable: bool
+    user_action: str
+    status_code: int | None = None
+    reason: str | None = None
+
+    def __str__(self) -> str:
+        return f"{self.category.name}: {self.message}"
+
+
+def classify_error(exc: BaseException) -> APIError:
+    """Classify an exception into an APIError with handling guidance.
+
+    Args:
+        exc: The exception to classify
+
+    Returns:
+        APIError with category, retryability, and user action guidance
+    """
+    if isinstance(exc, HttpError):
+        status = exc.resp.status
+        reason = exc.reason or ""
+
+        # Parse error details from response
+        error_reason = None
+        try:
+            error_content = json.loads(exc.content.decode("utf-8"))
+            errors = error_content.get("error", {}).get("errors", [])
+            if errors:
+                error_reason = errors[0].get("reason")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # 429 Rate Limit
+        if status == 429:
+            return APIError(
+                category=ErrorCategory.RATE_LIMITED,
+                message="Rate limit exceeded. Slowing down requests.",
+                retryable=True,
+                user_action="Wait a moment. Requests will automatically retry.",
+                status_code=status,
+                reason=error_reason,
+            )
+
+        # 403 Quota Exceeded vs Permission Denied
+        if status == 403:
+            if error_reason == "quotaExceeded":
+                reset_time = get_time_until_reset()
+                return APIError(
+                    category=ErrorCategory.QUOTA_EXCEEDED,
+                    message=f"Daily quota exceeded. Resets in {reset_time} (midnight PT).",
+                    retryable=False,
+                    user_action="Wait until midnight PT or use --project to switch projects.",
+                    status_code=status,
+                    reason=error_reason,
+                )
+            return APIError(
+                category=ErrorCategory.PERMISSION_DENIED,
+                message=f"Permission denied: {reason}",
+                retryable=False,
+                user_action="Check playlist ownership or re-authenticate with 'ytrix auth'.",
+                status_code=status,
+                reason=error_reason,
+            )
+
+        # 404 Not Found
+        if status == 404:
+            return APIError(
+                category=ErrorCategory.NOT_FOUND,
+                message=f"Resource not found: {reason}",
+                retryable=False,
+                user_action="Check if the video/playlist exists and is not deleted.",
+                status_code=status,
+                reason=error_reason,
+            )
+
+        # 400 Bad Request
+        if status == 400:
+            return APIError(
+                category=ErrorCategory.INVALID_REQUEST,
+                message=f"Invalid request: {reason}",
+                retryable=False,
+                user_action="Check input data. Video may be unavailable or restricted.",
+                status_code=status,
+                reason=error_reason,
+            )
+
+        # 5xx Server Error
+        if status >= 500:
+            return APIError(
+                category=ErrorCategory.SERVER_ERROR,
+                message=f"YouTube server error ({status}): {reason}",
+                retryable=True,
+                user_action="Server issue. Requests will automatically retry.",
+                status_code=status,
+                reason=error_reason,
+            )
+
+        # Other HTTP errors
+        return APIError(
+            category=ErrorCategory.UNKNOWN,
+            message=f"HTTP error {status}: {reason}",
+            retryable=False,
+            user_action="Unexpected error. Check logs for details.",
+            status_code=status,
+            reason=error_reason,
+        )
+
+    # Network/connection errors
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return APIError(
+            category=ErrorCategory.NETWORK_ERROR,
+            message=f"Network error: {exc}",
+            retryable=True,
+            user_action="Check internet connection. Requests will retry.",
+        )
+
+    # Unknown errors
+    return APIError(
+        category=ErrorCategory.UNKNOWN,
+        message=str(exc),
+        retryable=False,
+        user_action="Unexpected error. Check logs for details.",
+    )
 
 
 class QuotaExceededError(Exception):
@@ -122,36 +267,29 @@ def _is_quota_exceeded(exc: HttpError) -> bool:
 
 
 def _is_retryable_error(exc: BaseException) -> bool:
-    """Check if an HTTP error is retryable (rate limit, server error).
+    """Check if an HTTP error is retryable using classify_error.
 
     Returns True for:
     - 429 RATE_LIMIT_EXCEEDED (per-minute rate limit, retryable)
     - 5xx server errors (retryable)
+    - Network errors (retryable)
 
     Returns False for:
     - 403 quotaExceeded (daily quota, NOT retryable until midnight PT)
     - Other client errors (not retryable)
     """
-    if isinstance(exc, HttpError):
-        status = exc.resp.status
+    api_error = classify_error(exc)
 
-        # Check for daily quota exceeded (403 quotaExceeded) - NOT retryable
-        if _is_quota_exceeded(exc):
-            reset_time = get_time_until_reset()
-            logger.error("Daily quota exceeded! Resets in {} (midnight PT).", reset_time)
-            return False
+    # Log the error with appropriate level
+    if api_error.category == ErrorCategory.QUOTA_EXCEEDED:
+        logger.error("{}. {}", api_error.message, api_error.user_action)
+    elif api_error.category == ErrorCategory.RATE_LIMITED:
+        logger.warning("{}. {}", api_error.message, api_error.user_action)
+        _throttler.increase_delay()  # Slow down future requests
+    elif api_error.retryable:
+        logger.warning("{} (will retry)", api_error.message)
 
-        # Retry on rate limit (429) and server errors (5xx)
-        if status == 429:
-            logger.warning("Rate limit hit (429), will retry with backoff")
-            _throttler.increase_delay()  # Slow down future requests
-            return True
-
-        if status >= 500:
-            logger.warning("Server error {} (will retry): {}", status, exc.reason)
-            return True
-
-    return False
+    return api_error.retryable
 
 
 # Retry decorator for API calls: 10 attempts, exponential backoff 2-300s with jitter

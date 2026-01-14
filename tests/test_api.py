@@ -9,11 +9,14 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from ytrix.api import (
+    APIError,
+    ErrorCategory,
     PlaylistItem,
     Throttler,
     _is_quota_exceeded,
     _is_retryable_error,
     add_video_to_playlist,
+    classify_error,
     create_playlist,
     get_credentials,
     get_playlist_items,
@@ -443,6 +446,111 @@ class TestErrorHandling:
         content = json.dumps({"something": "else"}).encode()
         error = HttpError(resp, content, uri="https://api.example.com")
         assert _is_quota_exceeded(error) is False
+
+
+class TestClassifyError:
+    """Tests for classify_error function and ErrorCategory enum."""
+
+    def _make_http_error(self, status: int, reason: str = "unknown") -> HttpError:
+        """Create a mock HttpError."""
+        resp = MagicMock()
+        resp.status = status
+        resp.reason = f"Error: {reason}"
+        content = json.dumps({"error": {"errors": [{"reason": reason}]}}).encode()
+        return HttpError(resp, content, uri="https://api.example.com")
+
+    def test_classifies_429_as_rate_limited(self) -> None:
+        """429 errors are classified as RATE_LIMITED."""
+        error = self._make_http_error(429, "rateLimitExceeded")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.RATE_LIMITED
+        assert result.retryable is True
+        assert "rate limit" in result.message.lower()
+
+    def test_classifies_403_quota_as_quota_exceeded(self) -> None:
+        """403 quotaExceeded is classified as QUOTA_EXCEEDED."""
+        error = self._make_http_error(403, "quotaExceeded")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.QUOTA_EXCEEDED
+        assert result.retryable is False
+        assert "midnight PT" in result.user_action
+
+    def test_classifies_403_forbidden_as_permission_denied(self) -> None:
+        """403 forbidden (not quota) is classified as PERMISSION_DENIED."""
+        error = self._make_http_error(403, "forbidden")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.PERMISSION_DENIED
+        assert result.retryable is False
+
+    def test_classifies_404_as_not_found(self) -> None:
+        """404 errors are classified as NOT_FOUND."""
+        error = self._make_http_error(404, "playlistNotFound")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.NOT_FOUND
+        assert result.retryable is False
+
+    def test_classifies_400_as_invalid_request(self) -> None:
+        """400 errors are classified as INVALID_REQUEST."""
+        error = self._make_http_error(400, "badRequest")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.INVALID_REQUEST
+        assert result.retryable is False
+
+    def test_classifies_500_as_server_error(self) -> None:
+        """5xx errors are classified as SERVER_ERROR."""
+        error = self._make_http_error(500, "internalError")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.SERVER_ERROR
+        assert result.retryable is True
+
+    def test_classifies_502_as_server_error(self) -> None:
+        """502 gateway errors are also SERVER_ERROR."""
+        error = self._make_http_error(502, "badGateway")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.SERVER_ERROR
+        assert result.retryable is True
+
+    def test_classifies_connection_error_as_network_error(self) -> None:
+        """ConnectionError is classified as NETWORK_ERROR."""
+        error = ConnectionError("Connection refused")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.NETWORK_ERROR
+        assert result.retryable is True
+
+    def test_classifies_timeout_as_network_error(self) -> None:
+        """TimeoutError is classified as NETWORK_ERROR."""
+        error = TimeoutError("Connection timed out")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.NETWORK_ERROR
+        assert result.retryable is True
+
+    def test_classifies_unknown_exception_as_unknown(self) -> None:
+        """Unknown exceptions are classified as UNKNOWN."""
+        error = ValueError("Something unexpected")
+        result = classify_error(error)
+        assert result.category == ErrorCategory.UNKNOWN
+        assert result.retryable is False
+
+    def test_api_error_str_representation(self) -> None:
+        """APIError has useful string representation."""
+        error = APIError(
+            category=ErrorCategory.RATE_LIMITED,
+            message="Rate limit hit",
+            retryable=True,
+            user_action="Wait and retry",
+        )
+        assert "RATE_LIMITED" in str(error)
+        assert "Rate limit hit" in str(error)
+
+    def test_retryable_error_check_uses_classify_error(self) -> None:
+        """_is_retryable_error uses classify_error internally."""
+        error_429 = self._make_http_error(429, "rateLimitExceeded")
+        error_403 = self._make_http_error(403, "quotaExceeded")
+
+        # 429 should be retryable
+        assert _is_retryable_error(error_429) is True
+        # 403 quota should not be retryable
+        assert _is_retryable_error(error_403) is False
 
 
 class TestUpdatePlaylistFields:
