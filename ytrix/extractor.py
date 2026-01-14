@@ -6,27 +6,19 @@ from typing import Any
 from yt_dlp import YoutubeDL
 
 from ytrix import cache
-from ytrix.info import _is_rate_limit_error, _ytdlp_throttler
+from ytrix.info import _is_rate_limit_error, _ytdlp_throttler, get_ytdlp_base_opts
 from ytrix.logging import logger
 from ytrix.models import Playlist, Video, extract_playlist_id
-
-# Shared options for all yt-dlp operations
-_BASE_OPTS: dict[str, Any] = {
-    "quiet": True,
-    "no_warnings": True,
-    "extract_flat": True,  # For playlists: get metadata only, not full video info
-    "skip_download": True,
-}
 
 
 def _extract_info(url: str, flat: bool = True, max_retries: int = 5) -> dict[str, Any]:
     """Run yt-dlp extract_info with throttling and retry logic."""
-    opts = {**_BASE_OPTS, "extract_flat": flat}
+    opts = get_ytdlp_base_opts(extract_flat=flat)
 
     for attempt in range(max_retries):
         _ytdlp_throttler.wait()
         try:
-            with YoutubeDL(opts) as ydl:
+            with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 info = ydl.extract_info(url, download=False)
                 if info is None:
                     raise RuntimeError(f"yt-dlp returned no info for {url}")

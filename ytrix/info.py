@@ -89,21 +89,148 @@ class Throttler:
         return float(base + jitter)
 
 
-# Global throttler for yt-dlp operations
+# Global throttlers for yt-dlp operations
+# Base delay is conservative to avoid YouTube rate limits (HTTP 429)
 _ytdlp_throttler = Throttler(delay_ms=500)
-_subtitle_throttler = Throttler(delay_ms=200)
+_subtitle_throttler = Throttler(delay_ms=1000)  # Subtitles are more rate-limited
 
 
 def set_ytdlp_throttle_delay(delay_ms: int) -> None:
-    """Set the throttle delay for yt-dlp operations."""
+    """Set the throttle delay for yt-dlp operations.
+
+    Args:
+        delay_ms: Minimum milliseconds between yt-dlp calls (default: 500)
+    """
     _ytdlp_throttler._delay_ms = delay_ms
     _ytdlp_throttler._base_delay_ms = delay_ms
+
+
+def set_subtitle_throttle_delay(delay_ms: int) -> None:
+    """Set the throttle delay for subtitle download operations.
+
+    Args:
+        delay_ms: Minimum milliseconds between subtitle downloads (default: 1000)
+
+    Note: YouTube rate-limits subtitle requests more aggressively than video metadata.
+    If hitting 429 errors, increase this value (e.g., 2000-3000ms).
+    """
+    _subtitle_throttler._delay_ms = delay_ms
+    _subtitle_throttler._base_delay_ms = delay_ms
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
     """Check if exception indicates a rate limit error."""
     msg = str(exc).lower()
     return "429" in msg or "rate" in msg or "too many" in msg
+
+
+# --- yt-dlp rate limiting configuration ---
+# Based on community experience: 10-20 seconds between requests avoids rate limits.
+# See: https://github.com/yt-dlp/yt-dlp/issues/
+
+
+@dataclass
+class YtdlpRateLimitConfig:
+    """Configuration for yt-dlp rate limiting.
+
+    These options are passed directly to yt-dlp to avoid YouTube's bot detection.
+    Recommended: 10-20 seconds between requests for sustained downloads.
+    """
+
+    # Sleep between requests during metadata extraction (seconds)
+    sleep_interval_requests: float = 5.0
+
+    # Sleep before each download (min, for randomization)
+    sleep_interval: float = 5.0
+
+    # Sleep before each download (max, for randomization)
+    # If set, yt-dlp picks random value between sleep_interval and max_sleep_interval
+    max_sleep_interval: float = 10.0
+
+    # Sleep before each subtitle download (seconds)
+    sleep_interval_subtitles: float = 10.0
+
+    # Rate limit in bytes/sec (e.g., 2_500_000 = 2.5 MB/s), None = no limit
+    ratelimit: int | None = None
+
+    def to_ytdlp_opts(self) -> dict[str, Any]:
+        """Convert to yt-dlp options dict."""
+        opts: dict[str, Any] = {}
+        if self.sleep_interval_requests > 0:
+            opts["sleep_interval_requests"] = self.sleep_interval_requests
+        if self.sleep_interval > 0:
+            opts["sleep_interval"] = self.sleep_interval
+        if self.max_sleep_interval > 0:
+            opts["max_sleep_interval"] = self.max_sleep_interval
+        if self.sleep_interval_subtitles > 0:
+            opts["sleep_interval_subtitles"] = self.sleep_interval_subtitles
+        if self.ratelimit:
+            opts["ratelimit"] = self.ratelimit
+        return opts
+
+
+# Global rate limit config - can be modified via configure_ytdlp_rate_limits()
+_rate_limit_config = YtdlpRateLimitConfig()
+
+
+def configure_ytdlp_rate_limits(
+    sleep_requests: float | None = None,
+    sleep_interval: float | None = None,
+    max_sleep_interval: float | None = None,
+    sleep_subtitles: float | None = None,
+    ratelimit: int | None = None,
+) -> None:
+    """Configure yt-dlp rate limiting settings.
+
+    Args:
+        sleep_requests: Seconds to sleep between requests during extraction
+        sleep_interval: Min seconds to sleep before each download
+        max_sleep_interval: Max seconds to sleep (for randomization)
+        sleep_subtitles: Seconds to sleep before subtitle downloads
+        ratelimit: Rate limit in bytes/sec (e.g., 2_500_000 for 2.5 MB/s)
+    """
+    global _rate_limit_config
+    if sleep_requests is not None:
+        _rate_limit_config.sleep_interval_requests = sleep_requests
+    if sleep_interval is not None:
+        _rate_limit_config.sleep_interval = sleep_interval
+    if max_sleep_interval is not None:
+        _rate_limit_config.max_sleep_interval = max_sleep_interval
+    if sleep_subtitles is not None:
+        _rate_limit_config.sleep_interval_subtitles = sleep_subtitles
+    if ratelimit is not None:
+        _rate_limit_config.ratelimit = ratelimit
+
+
+def get_ytdlp_base_opts(
+    quiet: bool = True,
+    skip_download: bool = True,
+    extract_flat: bool = False,
+    include_rate_limits: bool = True,
+) -> dict[str, Any]:
+    """Get base yt-dlp options with rate limiting.
+
+    Args:
+        quiet: Suppress yt-dlp output (default: True)
+        skip_download: Don't download video files (default: True)
+        extract_flat: Extract flat metadata only (default: False)
+        include_rate_limits: Include rate limiting options (default: True)
+
+    Returns:
+        Dict of yt-dlp options ready for YoutubeDL()
+    """
+    opts: dict[str, Any] = {
+        "quiet": quiet,
+        "no_warnings": quiet,
+        "skip_download": skip_download,
+    }
+    if extract_flat:
+        opts["extract_flat"] = True
+
+    if include_rate_limits:
+        opts.update(_rate_limit_config.to_ytdlp_opts())
+
+    return opts
 
 
 @dataclass
@@ -231,15 +358,10 @@ def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
     for attempt in range(max_retries):
         _ytdlp_throttler.wait()
         try:
-            with YoutubeDL(
-                {  # pyright: ignore[reportArgumentType]
-                    "quiet": True,
-                    "no_warnings": True,
-                    "skip_download": True,
-                    "writesubtitles": False,
-                    "writeautomaticsub": False,
-                }
-            ) as ydl:
+            opts = get_ytdlp_base_opts()
+            opts["writesubtitles"] = False
+            opts["writeautomaticsub"] = False
+            with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 info = ydl.extract_info(url, download=False)
                 if info is None:
                     raise RuntimeError(f"yt-dlp returned no info for {video_id}")
@@ -327,14 +449,8 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
     for attempt in range(max_retries):
         _ytdlp_throttler.wait()
         try:
-            with YoutubeDL(
-                {  # pyright: ignore[reportArgumentType]
-                    "quiet": True,
-                    "no_warnings": True,
-                    "extract_flat": True,
-                    "skip_download": True,
-                }
-            ) as ydl:
+            opts = get_ytdlp_base_opts(extract_flat=True)
+            with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 data = ydl.extract_info(url, download=False)
                 if data is None:
                     raise RuntimeError(f"yt-dlp returned no info for {playlist_id}")
@@ -410,18 +526,18 @@ def download_subtitle(
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Configure yt-dlp for subtitle-only download
-                ydl_opts = {
-                    "quiet": True,
-                    "no_warnings": True,
-                    "skip_download": True,  # Don't download video
-                    "writesubtitles": sub.source == "manual",
-                    "writeautomaticsub": sub.source == "automatic",
-                    "subtitleslangs": [sub.lang],
-                    "subtitlesformat": sub.ext if sub.ext in ("srt", "vtt") else "srt",
-                    "outtmpl": f"{tmpdir}/%(id)s.%(ext)s",
-                }
+                opts = get_ytdlp_base_opts()
+                opts.update(
+                    {
+                        "writesubtitles": sub.source == "manual",
+                        "writeautomaticsub": sub.source == "automatic",
+                        "subtitleslangs": [sub.lang],
+                        "subtitlesformat": sub.ext if sub.ext in ("srt", "vtt") else "srt",
+                        "outtmpl": f"{tmpdir}/%(id)s.%(ext)s",
+                    }
+                )
 
-                with YoutubeDL(ydl_opts) as ydl:
+                with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                     url = f"https://www.youtube.com/watch?v={video_id}"
                     ydl.download([url])
 

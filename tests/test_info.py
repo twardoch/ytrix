@@ -682,6 +682,18 @@ class TestSetYtdlpThrottleDelay:
         info.set_ytdlp_throttle_delay(original)
 
 
+class TestSetSubtitleThrottleDelay:
+    """Tests for set_subtitle_throttle_delay function."""
+
+    def test_sets_delay(self) -> None:
+        original = info._subtitle_throttler._delay_ms
+        info.set_subtitle_throttle_delay(2000)
+        assert info._subtitle_throttler._delay_ms == 2000
+        assert info._subtitle_throttler._base_delay_ms == 2000
+        # Restore
+        info.set_subtitle_throttle_delay(original)
+
+
 class TestSubtitleToTranscriptFormats:
     """Tests for subtitle_to_transcript format detection."""
 
@@ -839,3 +851,155 @@ class TestExtractPlaylistInfoRetry:
             pytest.raises(RuntimeError, match="returned no info"),
         ):
             info.extract_playlist_info("PLtest", max_retries=1)
+
+
+class TestYtdlpRateLimitConfig:
+    """Tests for YtdlpRateLimitConfig class."""
+
+    def test_default_values(self) -> None:
+        """Default config has sensible values for rate limiting."""
+        config = info.YtdlpRateLimitConfig()
+        assert config.sleep_interval_requests == 5.0
+        assert config.sleep_interval == 5.0
+        assert config.max_sleep_interval == 10.0
+        assert config.sleep_interval_subtitles == 10.0
+        assert config.ratelimit is None
+
+    def test_custom_values(self) -> None:
+        """Can create config with custom values."""
+        config = info.YtdlpRateLimitConfig(
+            sleep_interval_requests=20.0,
+            sleep_interval=10.0,
+            max_sleep_interval=15.0,
+            sleep_interval_subtitles=25.0,
+            ratelimit=2_500_000,
+        )
+        assert config.sleep_interval_requests == 20.0
+        assert config.sleep_interval == 10.0
+        assert config.max_sleep_interval == 15.0
+        assert config.sleep_interval_subtitles == 25.0
+        assert config.ratelimit == 2_500_000
+
+    def test_to_ytdlp_opts(self) -> None:
+        """Converts to yt-dlp options dict."""
+        config = info.YtdlpRateLimitConfig(
+            sleep_interval_requests=5.0,
+            sleep_interval=3.0,
+            max_sleep_interval=6.0,
+            sleep_interval_subtitles=8.0,
+            ratelimit=1_000_000,
+        )
+        opts = config.to_ytdlp_opts()
+        assert opts["sleep_interval_requests"] == 5.0
+        assert opts["sleep_interval"] == 3.0
+        assert opts["max_sleep_interval"] == 6.0
+        assert opts["sleep_interval_subtitles"] == 8.0
+        assert opts["ratelimit"] == 1_000_000
+
+    def test_to_ytdlp_opts_excludes_zero_values(self) -> None:
+        """Zero values are excluded from options."""
+        config = info.YtdlpRateLimitConfig(
+            sleep_interval_requests=0,
+            sleep_interval=0,
+            max_sleep_interval=0,
+            sleep_interval_subtitles=0,
+            ratelimit=None,
+        )
+        opts = config.to_ytdlp_opts()
+        assert "sleep_interval_requests" not in opts
+        assert "sleep_interval" not in opts
+        assert "max_sleep_interval" not in opts
+        assert "sleep_interval_subtitles" not in opts
+        assert "ratelimit" not in opts
+
+
+class TestConfigureYtdlpRateLimits:
+    """Tests for configure_ytdlp_rate_limits function."""
+
+    def test_configures_sleep_requests(self) -> None:
+        """Can configure sleep_requests."""
+        original = info._rate_limit_config.sleep_interval_requests
+        info.configure_ytdlp_rate_limits(sleep_requests=15.0)
+        assert info._rate_limit_config.sleep_interval_requests == 15.0
+        # Restore
+        info._rate_limit_config.sleep_interval_requests = original
+
+    def test_configures_sleep_interval(self) -> None:
+        """Can configure sleep_interval."""
+        original = info._rate_limit_config.sleep_interval
+        info.configure_ytdlp_rate_limits(sleep_interval=12.0)
+        assert info._rate_limit_config.sleep_interval == 12.0
+        info._rate_limit_config.sleep_interval = original
+
+    def test_configures_max_sleep_interval(self) -> None:
+        """Can configure max_sleep_interval."""
+        original = info._rate_limit_config.max_sleep_interval
+        info.configure_ytdlp_rate_limits(max_sleep_interval=20.0)
+        assert info._rate_limit_config.max_sleep_interval == 20.0
+        info._rate_limit_config.max_sleep_interval = original
+
+    def test_configures_sleep_subtitles(self) -> None:
+        """Can configure sleep_subtitles."""
+        original = info._rate_limit_config.sleep_interval_subtitles
+        info.configure_ytdlp_rate_limits(sleep_subtitles=18.0)
+        assert info._rate_limit_config.sleep_interval_subtitles == 18.0
+        info._rate_limit_config.sleep_interval_subtitles = original
+
+    def test_configures_ratelimit(self) -> None:
+        """Can configure ratelimit."""
+        original = info._rate_limit_config.ratelimit
+        info.configure_ytdlp_rate_limits(ratelimit=2_500_000)
+        assert info._rate_limit_config.ratelimit == 2_500_000
+        info._rate_limit_config.ratelimit = original
+
+
+class TestGetYtdlpBaseOpts:
+    """Tests for get_ytdlp_base_opts function."""
+
+    def test_returns_quiet_by_default(self) -> None:
+        """Returns quiet options by default."""
+        opts = info.get_ytdlp_base_opts()
+        assert opts["quiet"] is True
+        assert opts["no_warnings"] is True
+
+    def test_returns_skip_download_by_default(self) -> None:
+        """Returns skip_download by default."""
+        opts = info.get_ytdlp_base_opts()
+        assert opts["skip_download"] is True
+
+    def test_includes_extract_flat_when_requested(self) -> None:
+        """Includes extract_flat when requested."""
+        opts = info.get_ytdlp_base_opts(extract_flat=True)
+        assert opts["extract_flat"] is True
+
+    def test_excludes_extract_flat_by_default(self) -> None:
+        """Does not include extract_flat by default."""
+        opts = info.get_ytdlp_base_opts()
+        assert "extract_flat" not in opts
+
+    def test_includes_rate_limits_by_default(self) -> None:
+        """Includes rate limiting options by default."""
+        opts = info.get_ytdlp_base_opts()
+        assert "sleep_interval_requests" in opts
+        assert "sleep_interval" in opts
+        assert "max_sleep_interval" in opts
+        assert "sleep_interval_subtitles" in opts
+
+    def test_excludes_rate_limits_when_disabled(self) -> None:
+        """Can exclude rate limiting options."""
+        opts = info.get_ytdlp_base_opts(include_rate_limits=False)
+        assert "sleep_interval_requests" not in opts
+        assert "sleep_interval" not in opts
+        assert "max_sleep_interval" not in opts
+        assert "sleep_interval_subtitles" not in opts
+
+    def test_can_override_quiet(self) -> None:
+        """Can override quiet setting."""
+        opts = info.get_ytdlp_base_opts(quiet=False)
+        assert opts["quiet"] is False
+        assert opts["no_warnings"] is False
+
+    def test_can_override_skip_download(self) -> None:
+        """Can override skip_download setting."""
+        opts = info.get_ytdlp_base_opts(skip_download=False)
+        assert opts["skip_download"] is False
