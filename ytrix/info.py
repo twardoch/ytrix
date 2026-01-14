@@ -900,7 +900,7 @@ def extract_and_save_playlist_info(
     url_or_id: str,
     output_dir: Path | str,
     max_languages: int = 5,
-    langs: str | None = None,
+    langs: str | tuple[str, ...] | list[str] | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
     video_delay: float = 0.5,
     parallel: bool | None = None,
@@ -1009,7 +1009,11 @@ def extract_and_save_playlist_info(
         selected_subs = []
         if langs:
             # Use explicit language list (takes precedence)
-            allowed_langs = {lang.strip().lower() for lang in langs.split(",")}
+            # Handle both string "en,ru" and tuple/list ("en", "ru") from Fire CLI
+            if isinstance(langs, str):
+                allowed_langs = {lang.strip().lower() for lang in langs.split(",")}
+            else:
+                allowed_langs = {str(lang).strip().lower() for lang in langs}
             for sub in subs:
                 if sub.lang.lower() in allowed_langs and sub.lang not in seen_langs:
                     selected_subs.append(sub)
