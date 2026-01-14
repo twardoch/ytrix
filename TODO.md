@@ -39,7 +39,7 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Audit `playlistItems().list()` calls for `maxResults=50`
 - [x] Audit `playlists().list()` calls for `maxResults=50`
 - [x] Audit `videos().list()` calls for `maxResults=50`
-- [ ] Add `estimate_copy_cost()` function to quota.py
+- [x] Add `estimate_copy_cost()` function to quota.py
 - [ ] Add pre-flight quota check to `plist2mlist` command
 - [ ] Add pre-flight quota check to `plists2mlists` command
 - [x] Search codebase for `search.list` and remove/deprecate (none found)
@@ -125,11 +125,11 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [ ] Write migration script for existing journal.json
 
 ### 10.9 Testing & Documentation ([09-testing-documentation.md](issues/401/09-testing-documentation.md))
-- [ ] Create `tests/conftest.py` with shared fixtures
-- [ ] Add `mock_youtube_client` fixture
-- [ ] Add `quota_exceeded_error` fixture (403)
-- [ ] Add `rate_limit_error` fixture (429)
-- [ ] Add `mock_yt_dlp` fixture
+- [x] Create `tests/conftest.py` with shared fixtures
+- [x] Add `mock_youtube_client` fixture
+- [x] Add `quota_exceeded_error` fixture (403)
+- [x] Add `rate_limit_error` fixture (429)
+- [x] Add `mock_yt_dlp` fixture (mock_ytdlp_info, mock_ytdlp_playlist_info)
 - [ ] Create `tests/test_error_handling.py`
 - [ ] Add `test_classify_429_as_rate_limited`
 - [ ] Add `test_classify_403_quota_as_not_retryable`
@@ -153,7 +153,7 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [ ] Update README.md with quota management section
 - [ ] Update README.md with error recovery section
 - [ ] Create `docs/errors.md` with error catalog
-- [ ] Update CHANGELOG.md with Phase 10 changes
+- [x] Update CHANGELOG.md with Phase 10 changes
 - [ ] Run coverage report and ensure 80%+ for new modules
 
 ## Future (Not Planned)

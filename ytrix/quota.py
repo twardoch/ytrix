@@ -205,6 +205,50 @@ def estimate_batch_copy(
     )
 
 
+def estimate_copy_cost(num_videos: int, create_playlist: bool = True) -> QuotaEstimate:
+    """Estimate quota cost for copying a single playlist.
+
+    This is used for pre-flight checks before plist2mlist and similar commands.
+
+    Args:
+        num_videos: Number of videos to copy
+        create_playlist: Whether a new playlist will be created
+
+    Returns:
+        QuotaEstimate with breakdown of costs
+
+    Example:
+        >>> est = estimate_copy_cost(25, create_playlist=True)
+        >>> est.total  # 50 (create) + 25*50 (adds) = 1300
+        1300
+    """
+    return QuotaEstimate(
+        playlist_creates=1 if create_playlist else 0,
+        video_adds=num_videos,
+        list_operations=1,  # Initial playlist fetch
+    )
+
+
+def can_afford_operation(estimate: QuotaEstimate) -> tuple[bool, str]:
+    """Check if current quota allows the estimated operation.
+
+    Args:
+        estimate: QuotaEstimate for the planned operation
+
+    Returns:
+        Tuple of (can_afford, message)
+    """
+    remaining = _tracker.remaining
+    if estimate.total <= remaining:
+        return True, f"Operation needs {estimate.total:,} units, {remaining:,} available."
+
+    shortage = estimate.total - remaining
+    return False, (
+        f"Operation needs {estimate.total:,} units but only {remaining:,} available. "
+        f"Shortage: {shortage:,} units. Wait for quota reset at midnight PT."
+    )
+
+
 def format_quota_warning(estimate: QuotaEstimate) -> str:
     """Format a user-friendly quota warning message."""
     create_cost = estimate.playlist_creates * 50

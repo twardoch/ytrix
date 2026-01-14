@@ -6,21 +6,40 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Multi-project context switching** (Phase 9):
-  - Support for `[[projects]]` array in config.toml for multiple GCP projects
-  - Per-project OAuth token storage in ~/.ytrix/tokens/{project_name}.json
-  - `projects` command to list configured projects and quota status
-  - `projects_auth <name>` command to authenticate specific project
-  - `projects_select <name>` command to select active project
-  - `--project` flag to force specific project on any command
-  - Automatic quota tracking with daily reset at midnight Pacific Time
-  - State persistence in ~/.ytrix/quota_state.json
-  - 47 new tests for config and projects modules
-- Quota exhaustion guidance now includes the YouTube API quota extension request form
+- **Phase 10: ToS-Compliant Architecture & UX Improvements**
+  - **yt-dlp rate limiting configuration** to avoid 429 errors:
+    - `YtdlpRateLimitConfig` dataclass with configurable sleep intervals
+    - Default: 5-10s between requests, 10s before subtitle downloads
+    - `configure_ytdlp_rate_limits()` for runtime configuration
+    - `get_ytdlp_base_opts()` centralized options builder
+    - Based on yt-dlp community guidance: 10-20s delays avoid bot detection
+  - **Structured error handling** with `ErrorCategory` enum and `classify_error()`:
+    - Categories: RATE_LIMITED, QUOTA_EXCEEDED, NOT_FOUND, PERMISSION_DENIED, INVALID_REQUEST, SERVER_ERROR, NETWORK_ERROR, UNKNOWN
+    - `APIError` dataclass with message, category, retryability, and user action guidance
+    - `_is_retryable_error()` now uses `classify_error()` for consistent behavior
+  - **GCP project initialization**: `gcp_init <project-name>` command to create and configure new GCP projects
+  - **Shared test fixtures** in `tests/conftest.py`:
+    - `make_http_error()` helper for creating mock HttpErrors
+    - `quota_exceeded_error`, `rate_limit_error`, `not_found_error` fixtures
+    - `mock_youtube_client` fixture with pre-configured method chains
+    - `mock_ytdlp_info`, `mock_ytdlp_playlist_info` fixtures
+  - **Quota estimation**: `estimate_copy_cost()` and `can_afford_operation()` in quota.py
+  - **Multi-project context switching** (Phase 9):
+    - Support for `[[projects]]` array in config.toml for multiple GCP projects
+    - Per-project OAuth token storage in ~/.ytrix/tokens/{project_name}.json
+    - `projects` command to list configured projects and quota status
+    - `projects_auth <name>` command to authenticate specific project
+    - `projects_select <name>` command to select active project
+    - `--project` flag to force specific project on any command
+    - Automatic quota tracking with daily reset at midnight Pacific Time
+    - State persistence in ~/.ytrix/quota_state.json
+  - Quota exhaustion guidance now includes the YouTube API quota extension request form
+  - `--subtitle-delay` CLI flag for configuring subtitle download delays
 
 ### Changed
 
-- 369 tests total (7 new extractor tests for 99% coverage)
+- Subtitle throttler base delay increased from 200ms to 1000ms for better rate limit avoidance
+- 386+ tests total with improved coverage
 - README multi-project guidance now emphasizes ToS-compliant context switching and quota extensions
 
 ## [1.2.0] - 2026-01-13
