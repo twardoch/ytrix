@@ -900,6 +900,7 @@ def extract_and_save_playlist_info(
     url_or_id: str,
     output_dir: Path | str,
     max_languages: int = 5,
+    langs: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
     video_delay: float = 0.5,
     parallel: bool | None = None,
@@ -917,6 +918,8 @@ def extract_and_save_playlist_info(
         url_or_id: Playlist URL or ID
         output_dir: Base output directory
         max_languages: Maximum number of language tracks to download per video
+        langs: Comma-separated ISO language codes (e.g., "en,ru"). Takes precedence
+               over max_languages when provided.
         progress_callback: Optional callback(video_index, total_videos, video_title)
         video_delay: Minimum seconds between processing videos (default: 0.5)
         parallel: Use parallel extraction (default: auto based on proxy status)
@@ -1001,15 +1004,24 @@ def extract_and_save_playlist_info(
             key=lambda s: (0 if s.source == "manual" else 1, s.lang),
         )
 
-        # Limit number of languages
+        # Filter subtitles by language preference
         seen_langs: set[str] = set()
         selected_subs = []
-        for sub in subs:
-            if sub.lang not in seen_langs:
-                selected_subs.append(sub)
-                seen_langs.add(sub.lang)
-            if len(selected_subs) >= max_languages:
-                break
+        if langs:
+            # Use explicit language list (takes precedence)
+            allowed_langs = {lang.strip().lower() for lang in langs.split(",")}
+            for sub in subs:
+                if sub.lang.lower() in allowed_langs and sub.lang not in seen_langs:
+                    selected_subs.append(sub)
+                    seen_langs.add(sub.lang)
+        else:
+            # Fall back to max_languages limit
+            for sub in subs:
+                if sub.lang not in seen_langs:
+                    selected_subs.append(sub)
+                    seen_langs.add(sub.lang)
+                if len(selected_subs) >= max_languages:
+                    break
 
         # Download and save subtitles
         for sub in selected_subs:

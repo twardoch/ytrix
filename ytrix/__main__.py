@@ -2274,6 +2274,7 @@ priority = {priority}
         url_or_id: str,
         output: str | None = None,
         max_languages: int = 5,
+        langs: str | None = None,
         delay: float = 0.5,
         subtitle_delay: int = 1000,
         video: bool = False,
@@ -2294,6 +2295,8 @@ priority = {priority}
             url_or_id: Playlist URL or ID
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
+            langs: Comma-separated ISO language codes (e.g., "en,ru").
+                   Takes precedence over max_languages when provided.
             delay: Seconds between video processing (default: 0.5)
             subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
                            increase to 2000-3000 if hitting 429 rate limit errors)
@@ -2305,6 +2308,7 @@ priority = {priority}
         Example:
             ytrix plist2info PLxxx
             ytrix plist2info PLxxx --output ./transcripts
+            ytrix plist2info PLxxx --langs en,ru  # Only English and Russian
             ytrix plist2info PLxxx --max-languages 3 --delay 1.0
             ytrix plist2info PLxxx --subtitle-delay 2000  # Slower for rate limits
             ytrix plist2info PLxxx --video  # Also download videos
@@ -2326,6 +2330,7 @@ priority = {priority}
             url_or_id,
             output_dir,
             max_languages=max_languages,
+            langs=langs,
             progress_callback=progress_cb,
             video_delay=delay,
         )
@@ -2383,6 +2388,7 @@ priority = {priority}
         file_path: str,
         output: str | None = None,
         max_languages: int = 5,
+        langs: str | None = None,
         delay: float = 0.5,
         subtitle_delay: int = 1000,
         parallel: bool | None = None,
@@ -2405,6 +2411,8 @@ priority = {priority}
             file_path: Text file with playlist URLs/IDs (one per line)
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
+            langs: Comma-separated ISO language codes (e.g., "en,ru").
+                   Takes precedence over max_languages when provided.
             delay: Seconds between video processing (default: 0.5, ignored with proxy)
             subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
                            increase to 2000-3000 if hitting 429 rate limit errors)
@@ -2417,6 +2425,7 @@ priority = {priority}
         Example:
             ytrix plists2info playlists.txt
             ytrix plists2info playlists.txt --output ./transcripts
+            ytrix plists2info playlists.txt --langs en,ru  # Only English and Russian
             ytrix plists2info playlists.txt --max-languages 2 --delay 1.0
             ytrix plists2info playlists.txt --subtitle-delay 2000  # Slower for rate limits
             ytrix plists2info playlists.txt --video  # Also download all videos
@@ -2455,6 +2464,7 @@ priority = {priority}
                     url,
                     output_dir,
                     max_languages=max_languages,
+                    langs=langs,
                     progress_callback=None,  # No per-video progress in parallel mode
                     video_delay=delay,
                 )
