@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.progress import Progress
 
 from ytrix import __version__, api, cache, extractor, info, quota, yaml_ops
+from ytrix.api import BatchAction, BatchOperationHandler, classify_error, display_error
 from ytrix.config import Config, get_config_dir, load_config
 from ytrix.dedup import MatchType, analyze_batch_deduplication, load_target_playlists_with_videos
 from ytrix.journal import (
@@ -27,7 +28,12 @@ from ytrix.journal import (
 from ytrix.logging import configure_logging, logger
 from ytrix.models import Playlist, extract_playlist_id
 from ytrix.projects import get_project_manager
-from ytrix.quota import QuotaEstimate, format_quota_warning
+from ytrix.quota import (
+    QuotaEstimate,
+    can_afford_operation,
+    estimate_copy_cost,
+    format_quota_warning,
+)
 
 console = Console()
 
@@ -1404,6 +1410,21 @@ priority = {priority}
                         console.print(msg)
                         console.print(f"[yellow]Adding {len(missing)} missing videos...[/yellow]")
 
+        # Pre-flight quota check
+        num_videos = len(source.videos)
+        if match_result and match_result.match_type == MatchType.PARTIAL:
+            # Only adding missing videos
+            num_videos = len(match_result.missing_videos or [])
+            estimate = estimate_copy_cost(num_videos, create_playlist=False)
+        else:
+            estimate = estimate_copy_cost(num_videos, create_playlist=True)
+
+        can_afford, quota_msg = can_afford_operation(estimate)
+        if not can_afford and not dry_run:
+            if not self._json:
+                console.print(f"[red]{quota_msg}[/red]")
+            raise ValueError(quota_msg)
+
         if dry_run:
             playlist_title = title or source.title
             result: dict[str, Any] = {
@@ -1413,6 +1434,7 @@ priority = {priority}
                 "description": source.description,
                 "video_count": len(source.videos),
                 "videos": [{"id": v.id, "title": v.title} for v in source.videos],
+                "quota_estimate": estimate.breakdown(),
             }
             if match_result:
                 result["dedup"] = {
@@ -1873,9 +1895,13 @@ priority = {priority}
             playlist_updates=len([t for t in pending_tasks if t.match_type == "partial"]),
         )
 
+        # Pre-flight quota check
+        can_afford, quota_msg = can_afford_operation(estimate)
         if not self._json:
             console.print()
             console.print(format_quota_warning(estimate))
+            if not can_afford:
+                console.print(f"[yellow]Warning: {quota_msg}[/yellow]")
             console.print()
 
         if dry_run:
@@ -1898,6 +1924,7 @@ priority = {priority}
         # Execute batch operations
         client = self._get_youtube_client(config)
         source_by_id = {p.id: p for p in source_playlists}
+        handler = BatchOperationHandler(max_consecutive_errors=3)
 
         for task in pending_tasks:
             source_playlist = source_by_id.get(task.source_playlist_id)
@@ -1920,6 +1947,9 @@ priority = {priority}
                                 api.add_video_to_playlist(client, target_id, video.id)
                                 added += 1
                             except Exception as e:
+                                video_error = classify_error(e)
+                                if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
+                                    raise  # Stop batch on quota exhaustion
                                 logger.warning("Failed to add {}: {}", video.id, e)
                     update_task(
                         journal,
@@ -1928,6 +1958,7 @@ priority = {priority}
                         target_playlist_id=target_id,
                         videos_added=added,
                     )
+                    handler.on_success()
                     if not self._json:
                         console.print(
                             f"[green]Updated: https://youtube.com/playlist?list={target_id} "
@@ -1951,6 +1982,9 @@ priority = {priority}
                                 api.add_video_to_playlist(client, new_id, video.id)
                                 added += 1
                             except Exception as e:
+                                video_error = classify_error(e)
+                                if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
+                                    raise  # Stop batch on quota exhaustion
                                 logger.warning("Failed to add {}: {}", video.id, e)
                             progress.advance(prog_task)
 
@@ -1961,13 +1995,15 @@ priority = {priority}
                         target_playlist_id=new_id,
                         videos_added=added,
                     )
+                    handler.on_success()
                     if not self._json:
                         console.print(
                             f"[green]Created: https://youtube.com/playlist?list={new_id}[/green]"
                         )
 
             except Exception as e:
-                logger.error("Failed {}: {}", task.source_playlist_id, e)
+                action = handler.handle_error(task.source_playlist_id, e)
+                api_error = classify_error(e)
                 update_task(
                     journal,
                     task.source_playlist_id,
@@ -1976,8 +2012,11 @@ priority = {priority}
                     increment_retry=True,
                 )
                 if not self._json:
-                    console.print(f"[red]Failed: {source_playlist.title} - {e}[/red]")
-                    console.print("[yellow]Use --resume to retry after quota resets[/yellow]")
+                    display_error(api_error)
+
+                if action == BatchAction.STOP_ALL:
+                    # Batch must stop - quota exhausted or too many errors
+                    break
 
         # Final summary
         summary = get_journal_summary(journal)

@@ -47,8 +47,8 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Audit `playlists().list()` calls for `maxResults=50`
 - [x] Audit `videos().list()` calls for `maxResults=50`
 - [x] Add `estimate_copy_cost()` function to quota.py
-- [ ] Add pre-flight quota check to `plist2mlist` command
-- [ ] Add pre-flight quota check to `plists2mlists` command
+- [x] Add pre-flight quota check to `plist2mlist` command
+- [x] Add pre-flight quota check to `plists2mlists` command
 - [x] Search codebase for `search.list` and remove/deprecate (none found)
 
 ### 10.4 Project Context Management ([04-project-context.md](issues/401/04-project-context.md))
@@ -89,7 +89,7 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Implement `BatchAction` enum (CONTINUE, SKIP_CURRENT, STOP_ALL)
 - [x] Add `handle_error()` method to BatchOperationHandler
 - [x] Implement `_pause_batch()` with resume instructions (as `_show_pause_message()`)
-- [ ] Update `plists2mlists` to use BatchOperationHandler
+- [x] Update `plists2mlists` to use BatchOperationHandler
 - [ ] Add error_category field to journal entries
 
 ### 10.7 CLI Dashboard & Quota Display ([07-cli-dashboard.md](issues/401/07-cli-dashboard.md))
@@ -137,12 +137,12 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `quota_exceeded_error` fixture (403)
 - [x] Add `rate_limit_error` fixture (429)
 - [x] Add `mock_yt_dlp` fixture (mock_ytdlp_info, mock_ytdlp_playlist_info)
-- [ ] Create `tests/test_error_handling.py`
-- [ ] Add `test_classify_429_as_rate_limited`
-- [ ] Add `test_classify_403_quota_as_not_retryable`
-- [ ] Add `test_retry_decorator_skips_quota_errors`
-- [ ] Add `test_batch_pauses_on_quota_exhausted`
-- [ ] Add `test_batch_continues_on_not_found`
+- [x] Create `tests/test_error_handling.py`
+- [x] Add `test_classify_429_as_rate_limited`
+- [x] Add `test_classify_403_quota_as_not_retryable`
+- [x] Add `test_retry_decorator_skips_quota_errors` (covered by error handling tests)
+- [x] Add `test_batch_pauses_on_quota_exhausted`
+- [x] Add `test_batch_continues_on_not_found`
 - [ ] Create `tests/test_quota.py`
 - [ ] Add `test_record_usage_increments_counter`
 - [ ] Add `test_remaining_quota_calculation`
