@@ -2235,6 +2235,7 @@ priority = {priority}
         output: str | None = None,
         max_languages: int = 5,
         delay: float = 0.5,
+        subtitle_delay: int = 1000,
     ) -> str | dict[str, Any] | None:
         """Extract playlist info with subtitles and transcripts.
 
@@ -2249,14 +2250,20 @@ priority = {priority}
             url_or_id: Playlist URL or ID
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
-            delay: Seconds between video processing (default: 0.5, set higher if rate limited)
+            delay: Seconds between video processing (default: 0.5)
+            subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
+                           increase to 2000-3000 if hitting 429 rate limit errors)
 
         Example:
             ytrix plist2info PLxxx
             ytrix plist2info PLxxx --output ./transcripts
             ytrix plist2info PLxxx --max-languages 3 --delay 1.0
+            ytrix plist2info PLxxx --subtitle-delay 2000  # Slower for rate limits
         """
         output_dir = Path(output) if output else Path.cwd()
+
+        # Configure subtitle throttle delay
+        info.set_subtitle_throttle_delay(subtitle_delay)
 
         if not self._json:
             console.print("[blue]Extracting playlist info...[/blue]")
@@ -2295,6 +2302,7 @@ priority = {priority}
         output: str | None = None,
         max_languages: int = 5,
         delay: float = 0.5,
+        subtitle_delay: int = 1000,
     ) -> list[str] | dict[str, Any] | None:
         """Extract info from multiple playlists with subtitles and transcripts.
 
@@ -2305,14 +2313,20 @@ priority = {priority}
             file_path: Text file with playlist URLs/IDs (one per line)
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
-            delay: Seconds between video processing (default: 0.5, set higher if rate limited)
+            delay: Seconds between video processing (default: 0.5)
+            subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
+                           increase to 2000-3000 if hitting 429 rate limit errors)
 
         Example:
             ytrix plists2info playlists.txt
             ytrix plists2info playlists.txt --output ./transcripts
             ytrix plists2info playlists.txt --max-languages 2 --delay 1.0
+            ytrix plists2info playlists.txt --subtitle-delay 2000  # Slower for rate limits
         """
         output_dir = Path(output) if output else Path.cwd()
+
+        # Configure subtitle throttle delay
+        info.set_subtitle_throttle_delay(subtitle_delay)
 
         # Read playlist URLs/IDs from file
         lines = Path(file_path).read_text().strip().split("\n")

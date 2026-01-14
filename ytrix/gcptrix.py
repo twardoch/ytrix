@@ -576,6 +576,63 @@ def get_service_account_iam(project_id: str, sa_email: str, dry_run: bool = Fals
     return policy.get("bindings", [])
 
 
+def get_oauth_guide(project_id: str) -> str:
+    """Return the OAuth setup guide for a project."""
+    return f"""
+OAUTH SETUP FOR YTRIX
+=====================
+
+Project: {project_id}
+
+1. CONFIGURE OAUTH CONSENT SCREEN
+
+   Open: https://console.cloud.google.com/apis/credentials/consent?project={project_id}
+
+   - Choose "External" user type (or "Internal" if using Google Workspace)
+   - App name: "ytrix" (or any name you prefer)
+   - User support email: your email
+   - Developer contact: your email
+   - Click "Save and Continue" through all screens
+   - Add your email as a test user
+
+2. CREATE OAUTH CREDENTIALS
+
+   Open: https://console.cloud.google.com/apis/credentials?project={project_id}
+
+   - Click "Create Credentials" → "OAuth client ID"
+   - Application type: "Desktop app"
+   - Name: "ytrix" (or any name)
+   - Click "Create"
+   - Copy the Client ID and Client Secret
+
+3. UPDATE YTRIX CONFIG
+
+   Edit ~/.ytrix/config.toml and add:
+
+   [[projects]]
+   name = "{project_id}"
+   client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+   client_secret = "YOUR_CLIENT_SECRET"
+
+4. AUTHENTICATE
+
+   Run: ytrix projects_auth {project_id}
+
+   This opens a browser for OAuth authorization.
+
+5. VERIFY
+
+   Run: ytrix projects
+
+   You should see {project_id} listed with quota status.
+"""
+
+
+def print_oauth_guide(project_id: str) -> None:
+    """Print the OAuth setup guide for a project."""
+    print(get_oauth_guide(project_id))
+
+
 def print_manual_steps(source_project: str, new_project: str) -> None:
     """Print detailed manual steps required after cloning."""
     print_section("Manual Steps Required")
@@ -674,6 +731,106 @@ New project console:
   https://console.cloud.google.com/home/dashboard?project={new_project}
 """
     )
+
+
+def init_project(
+    project_id: str,
+    billing_account: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """
+    Create a new GCP project from scratch with YouTube API enabled.
+
+    Args:
+        project_id: The ID for the new project (must be globally unique)
+        billing_account: Optional billing account ID to link
+        dry_run: If True, only print what would be done
+
+    Returns:
+        0 on success, non-zero on error
+    """
+    print_section("Creating New GCP Project")
+    print(f"  Project ID: {project_id}")
+    if dry_run:
+        print("\n  *** DRY RUN MODE - No changes will be made ***")
+
+    # Check prerequisites
+    print_step(1, "Checking prerequisites")
+    if not check_gcloud_installed():
+        print_error("gcloud CLI not found")
+        print_info("Install from: https://cloud.google.com/sdk/docs/install")
+        return 1
+    print_success("gcloud CLI is installed")
+
+    # Check authentication
+    print_step(2, "Checking authentication")
+    try:
+        auth_info = check_authentication()
+        print_success(f"Authenticated as: {auth_info['account']}")
+    except AuthenticationError as e:
+        print_error(str(e))
+        print_info("Run 'gcloud auth login' to authenticate")
+        return 1
+
+    # Check if project already exists
+    print_step(3, "Checking project availability")
+    if project_exists(project_id, dry_run):
+        print_error(f"Project already exists: {project_id}")
+        print_info("Choose a different project ID")
+        return 1
+    print_success(f"Project ID available: {project_id}")
+
+    # Create project
+    print_step(4, "Creating project")
+    try:
+        create_project(project_id, parent=None, dry_run=dry_run)
+        if not dry_run:
+            print_success(f"Created project: {project_id}")
+    except GcloudError as e:
+        print_error(f"Failed to create project: {e}")
+        return 1
+
+    # Link billing if provided
+    if billing_account:
+        print_step(5, "Linking billing account")
+        try:
+            link_billing(project_id, billing_account, dry_run)
+            if not dry_run:
+                print_success(f"Linked billing account: {billing_account}")
+        except GcloudError as e:
+            print_warning(f"Could not link billing: {e}")
+            print_info("You may need to link billing manually")
+    else:
+        print_step(5, "Skipping billing (not provided)")
+        print_info("Some APIs require billing. Link later if needed:")
+        print_info(f"  gcloud billing projects link {project_id} --billing-account=ACCOUNT_ID")
+
+    # Enable YouTube Data API
+    print_step(6, "Enabling YouTube Data API v3")
+    try:
+        enable_service(project_id, "youtube.googleapis.com", dry_run)
+        if not dry_run:
+            print_success("YouTube Data API v3 enabled")
+    except GcloudError as e:
+        print_warning(f"Could not enable YouTube API: {e}")
+        print_info("Enable manually at:")
+        print_info(
+            f"  https://console.cloud.google.com/apis/library/youtube.googleapis.com?project={project_id}"
+        )
+
+    # Print summary and next steps
+    if dry_run:
+        print_section("Dry Run Complete")
+        print("  No changes were made. Remove --dry-run to execute.")
+    else:
+        print_section("Project Created Successfully")
+        print(f"  Project ID: {project_id}")
+        print(f"  Console: https://console.cloud.google.com/home/dashboard?project={project_id}")
+
+    # Print OAuth guide
+    print_oauth_guide(project_id)
+
+    return 0
 
 
 def main() -> int:
