@@ -47,6 +47,7 @@ class TestTask:
         assert task.target_playlist_id is None
         assert task.status == TaskStatus.PENDING
         assert task.error is None
+        assert task.error_category is None
         assert task.retry_count == 0
         assert task.videos_added == 0
 
@@ -74,6 +75,7 @@ class TestTask:
             "target_playlist_id": "PL2",
             "status": "completed",
             "error": None,
+            "error_category": "QUOTA_EXCEEDED",
             "retry_count": 2,
             "videos_added": 10,
             "last_updated": "2024-01-01T12:00:00",
@@ -85,6 +87,7 @@ class TestTask:
         assert task.status == TaskStatus.COMPLETED
         assert task.retry_count == 2
         assert task.match_type == "exact"
+        assert task.error_category == "QUOTA_EXCEEDED"
 
 
 class TestJournal:
@@ -229,6 +232,25 @@ class TestUpdateTask:
         update_task(journal, "PL1", match_playlist_id="PLexisting123")
 
         assert journal.tasks[0].match_playlist_id == "PLexisting123"
+
+    def test_updates_error_category(self, temp_journal_dir: Path) -> None:
+        """Updates error_category field."""
+        journal = create_journal([("PL1", "Test")])
+        update_task(
+            journal,
+            "PL1",
+            status=TaskStatus.FAILED,
+            error="Quota exceeded",
+            error_category="QUOTA_EXCEEDED",
+        )
+
+        assert journal.tasks[0].error_category == "QUOTA_EXCEEDED"
+        assert journal.tasks[0].error == "Quota exceeded"
+
+        # Verify persistence
+        loaded = load_journal()
+        assert loaded is not None
+        assert loaded.tasks[0].error_category == "QUOTA_EXCEEDED"
 
 
 class TestGetPendingTasks:

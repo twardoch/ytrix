@@ -1,11 +1,15 @@
 """Tests for ytrix.quota module."""
 
+# this_file: tests/test_quota.py
+
 from ytrix.quota import (
     DAILY_QUOTA_LIMIT,
     QUOTA_COSTS,
     QuotaEstimate,
     QuotaTracker,
+    can_afford_operation,
     estimate_batch_copy,
+    estimate_copy_cost,
     format_quota_warning,
     get_quota_summary,
     get_time_until_reset,
@@ -300,3 +304,91 @@ class TestGlobalTracker:
         time_str = get_time_until_reset()
         # Should contain hours and/or minutes
         assert "h" in time_str or "m" in time_str
+
+
+class TestEstimateCopyCost:
+    """Tests for estimate_copy_cost function."""
+
+    def test_with_playlist_create(self) -> None:
+        """Includes playlist creation cost when creating new."""
+        estimate = estimate_copy_cost(10, create_playlist=True)
+        # 1 create (50) + 10 adds (500) + 1 list (1) = 551
+        assert estimate.playlist_creates == 1
+        assert estimate.video_adds == 10
+        assert estimate.list_operations == 1
+        assert estimate.total == 551
+
+    def test_without_playlist_create(self) -> None:
+        """Skips playlist creation when updating existing."""
+        estimate = estimate_copy_cost(10, create_playlist=False)
+        # 0 create + 10 adds (500) + 1 list (1) = 501
+        assert estimate.playlist_creates == 0
+        assert estimate.video_adds == 10
+        assert estimate.total == 501
+
+    def test_large_playlist(self) -> None:
+        """Calculates correctly for large playlists."""
+        estimate = estimate_copy_cost(200, create_playlist=True)
+        # 1 create (50) + 200 adds (10000) + 1 list (1) = 10051
+        assert estimate.total == 10051
+        assert estimate.days_required == 2  # Needs 2 days
+
+
+class TestCanAffordOperation:
+    """Tests for can_afford_operation function."""
+
+    def test_affordable_operation(self) -> None:
+        """Returns True for operations within remaining quota."""
+        tracker = get_tracker()
+        original_used = tracker.used
+
+        # Ensure enough quota
+        tracker.used = 0
+        estimate = QuotaEstimate(video_adds=10)  # 500 units
+
+        can_afford, msg = can_afford_operation(estimate)
+
+        assert can_afford is True
+        assert "available" in msg
+        assert "500" in msg
+
+        tracker.used = original_used
+
+    def test_unaffordable_operation(self) -> None:
+        """Returns False for operations exceeding remaining quota."""
+        tracker = get_tracker()
+        original_used = tracker.used
+        original_limit = tracker.limit
+
+        # Set up low remaining quota
+        tracker.used = 9800
+        tracker.limit = 10000  # Only 200 remaining
+
+        estimate = QuotaEstimate(video_adds=10)  # 500 units
+
+        can_afford, msg = can_afford_operation(estimate)
+
+        assert can_afford is False
+        assert "Shortage" in msg
+        assert "Wait" in msg
+
+        tracker.used = original_used
+        tracker.limit = original_limit
+
+    def test_exactly_affordable(self) -> None:
+        """Returns True when operation exactly fits remaining quota."""
+        tracker = get_tracker()
+        original_used = tracker.used
+        original_limit = tracker.limit
+
+        tracker.used = 9500
+        tracker.limit = 10000  # 500 remaining
+
+        estimate = QuotaEstimate(video_adds=10)  # 500 units exactly
+
+        can_afford, msg = can_afford_operation(estimate)
+
+        assert can_afford is True
+
+        tracker.used = original_used
+        tracker.limit = original_limit

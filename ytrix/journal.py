@@ -30,6 +30,7 @@ class Task:
     target_playlist_id: str | None = None
     status: TaskStatus = TaskStatus.PENDING
     error: str | None = None
+    error_category: str | None = None  # ErrorCategory name from api.py
     retry_count: int = 0
     videos_added: int = 0
     last_updated: str = ""
@@ -44,6 +45,7 @@ class Task:
             "target_playlist_id": self.target_playlist_id,
             "status": self.status.value,
             "error": self.error,
+            "error_category": self.error_category,
             "retry_count": self.retry_count,
             "videos_added": self.videos_added,
             "last_updated": self.last_updated,
@@ -60,6 +62,7 @@ class Task:
             target_playlist_id=data.get("target_playlist_id"),
             status=TaskStatus(data.get("status", "pending")),
             error=data.get("error"),
+            error_category=data.get("error_category"),
             retry_count=data.get("retry_count", 0),
             videos_added=data.get("videos_added", 0),
             last_updated=data.get("last_updated", ""),
@@ -160,6 +163,7 @@ def update_task(
     status: TaskStatus | None = None,
     target_playlist_id: str | None = None,
     error: str | None = None,
+    error_category: str | None = None,
     videos_added: int | None = None,
     match_type: str | None = None,
     match_playlist_id: str | None = None,
@@ -174,6 +178,8 @@ def update_task(
                 task.target_playlist_id = target_playlist_id
             if error is not None:
                 task.error = error
+            if error_category is not None:
+                task.error_category = error_category
             if videos_added is not None:
                 task.videos_added = videos_added
             if match_type is not None:

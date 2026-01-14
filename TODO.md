@@ -90,18 +90,18 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `handle_error()` method to BatchOperationHandler
 - [x] Implement `_pause_batch()` with resume instructions (as `_show_pause_message()`)
 - [x] Update `plists2mlists` to use BatchOperationHandler
-- [ ] Add error_category field to journal entries
+- [x] Add error_category field to journal entries
 
 ### 10.7 CLI Dashboard & Quota Display ([07-cli-dashboard.md](issues/401/07-cli-dashboard.md))
-- [ ] Create `ytrix/dashboard.py` module
-- [ ] Implement `get_time_until_reset()` function with zoneinfo
-- [ ] Implement `create_quota_dashboard()` with Rich panel
-- [ ] Add progress bar visualization (green/yellow/red thresholds)
-- [ ] Add operations table (reads, creates, adds, removes)
-- [ ] Add "Remaining Capacity" calculation
-- [ ] Implement `show_quota_warning(percentage, remaining)`
-- [ ] Implement `show_rate_limit_feedback(wait, attempt, max)`
-- [ ] Implement `show_session_summary(started, operations, quota, errors)`
+- [x] Create `ytrix/dashboard.py` module
+- [x] Implement `get_time_until_reset()` function with zoneinfo
+- [x] Implement `create_quota_dashboard()` with Rich panel
+- [x] Add progress bar visualization (green/yellow/red thresholds)
+- [x] Add operations table (reads, creates, adds, removes)
+- [x] Add "Remaining Capacity" calculation
+- [x] Implement `show_quota_warning(percentage, remaining)`
+- [x] Implement `show_rate_limit_feedback(wait, attempt, max)`
+- [x] Implement `show_session_summary(started, operations, quota, errors)`
 - [ ] Update `quota_status` command to use rich dashboard
 - [ ] Add `--all` flag to `quota_status` for all projects
 - [ ] Add `--progress` flag to batch commands (default for TTY)
@@ -143,12 +143,12 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `test_retry_decorator_skips_quota_errors` (covered by error handling tests)
 - [x] Add `test_batch_pauses_on_quota_exhausted`
 - [x] Add `test_batch_continues_on_not_found`
-- [ ] Create `tests/test_quota.py`
-- [ ] Add `test_record_usage_increments_counter`
-- [ ] Add `test_remaining_quota_calculation`
-- [ ] Add `test_warning_threshold_triggers`
-- [ ] Add `test_pre_check_blocks_oversized_operation`
-- [ ] Add `test_reset_calculation_before_midnight`
+- [x] Create `tests/test_quota.py`
+- [x] Add `test_record_usage_increments_counter`
+- [x] Add `test_remaining_quota_calculation`
+- [x] Add `test_warning_threshold_triggers`
+- [x] Add `test_pre_check_blocks_oversized_operation`
+- [x] Add `test_reset_calculation_before_midnight` (covered by get_time_until_reset test)
 - [ ] Create `tests/test_projects.py`
 - [ ] Add `test_select_by_quota_group`
 - [ ] Add `test_failover_within_same_group`

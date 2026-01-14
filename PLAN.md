@@ -349,18 +349,18 @@ Guided OAuth setup. See [05-gcp-automation.md](issues/401/05-gcp-automation.md).
 - [x] Add `_log_retry_attempt()` with user-friendly messages
 - [x] Implement `display_error()` with Rich panels
 - [x] Add `BatchOperationHandler` for batch error recovery
-- [ ] Update all commands to use new error handling
+- [x] Update all commands to use new error handling
 
 ### 10.7 CLI Dashboard & Quota Display
 
 Rich quota visualization. See [07-cli-dashboard.md](issues/401/07-cli-dashboard.md).
 
-- [ ] Create `ytrix/dashboard.py` module
-- [ ] Add `get_time_until_reset()` function (midnight PT calculation)
-- [ ] Add `create_quota_dashboard()` with progress bar and stats table
-- [ ] Add `show_quota_warning()` at 80% and 95% thresholds
-- [ ] Add `show_rate_limit_feedback()` for retry visibility
-- [ ] Add `show_session_summary()` for end-of-batch reporting
+- [x] Create `ytrix/dashboard.py` module
+- [x] Add `get_time_until_reset()` function (midnight PT calculation)
+- [x] Add `create_quota_dashboard()` with progress bar and stats table
+- [x] Add `show_quota_warning()` at 80% and 95% thresholds
+- [x] Add `show_rate_limit_feedback()` for retry visibility
+- [x] Add `show_session_summary()` for end-of-batch reporting
 - [ ] Update `quota_status` command to use rich dashboard
 - [ ] Add `--progress` and `--quiet` flags to batch commands
 
@@ -383,9 +383,9 @@ Enhanced resume and error tracking. See [08-journaling-improvements.md](issues/4
 
 Test coverage and docs. See [09-testing-documentation.md](issues/401/09-testing-documentation.md).
 
-- [ ] Create test fixtures in `tests/conftest.py` (mock clients, errors)
-- [ ] Add `test_error_handling.py` with error classification tests
-- [ ] Add `test_quota.py` with quota tracking tests
+- [x] Create test fixtures in `tests/conftest.py` (mock clients, errors)
+- [x] Add `test_error_handling.py` with error classification tests
+- [x] Add `test_quota.py` with quota tracking tests
 - [ ] Add `test_projects.py` with context selection tests
 - [ ] Add `test_journal.py` with enhanced journal tests
 - [ ] Add `test_dashboard.py` for CLI display tests

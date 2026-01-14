@@ -1051,3 +1051,146 @@ def extract_and_save_playlist_info(
             logger.warning("... and {} more", len(failed_videos) - 5)
 
     return playlist
+
+
+@dataclass
+class VideoDownloadTask:
+    """Pending video download task."""
+
+    video_id: str
+    output_path: Path  # Full path including filename prefix
+    title: str
+
+
+def get_video_format_string(lang: str = "en") -> str:
+    """Build yt-dlp format string for best video with preferred audio language.
+
+    For YouTube auto-dubbed videos, selects the best video stream combined with
+    an audio track matching the preferred language. Falls back to best available
+    audio if the preferred language isn't available.
+
+    Args:
+        lang: ISO 639-1 language code for preferred audio (default: "en")
+
+    Returns:
+        Format string for yt-dlp
+    """
+    # Best video + (audio in preferred language OR best audio fallback)
+    # Using language filter for auto-dubbed support
+    return f"bv*+(ba[language^={lang}]/ba)/b"
+
+
+def download_video(
+    video_id: str,
+    output_path: Path,
+    lang: str = "en",
+    use_proxy: bool = False,
+    max_retries: int = 3,
+) -> bool:
+    """Download a video file with preferred audio language.
+
+    Args:
+        video_id: YouTube video ID
+        output_path: Output path (without extension, yt-dlp adds it)
+        lang: Preferred audio language code (default: "en")
+        use_proxy: Whether to use rotating proxy (default: False)
+        max_retries: Maximum retry attempts
+
+    Returns:
+        True if download succeeded, False otherwise
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    format_str = get_video_format_string(lang)
+
+    for attempt in range(max_retries):
+        try:
+            opts: dict[str, Any] = {
+                "quiet": True,
+                "no_warnings": True,
+                "format": format_str,
+                "outtmpl": str(output_path) + ".%(ext)s",
+                "merge_output_format": "mp4",
+                # Prefer MP4 container for compatibility
+                "postprocessors": [
+                    {
+                        "key": "FFmpegVideoConvertor",
+                        "preferedformat": "mp4",
+                    }
+                ],
+            }
+
+            # Only use proxy if explicitly requested
+            if use_proxy and _proxy_url:
+                opts["proxy"] = _proxy_url
+                opts["socket_timeout"] = PROXY_SOCKET_TIMEOUT
+                opts["retries"] = 3
+
+            with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
+                ydl.download([url])
+
+            logger.debug("Downloaded video: {}", video_id)
+            return True
+
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = 2 ** (attempt + 1)  # Exponential backoff: 2, 4, 8s
+                logger.warning(
+                    "Video download failed for {} (attempt {}/{}): {}, retrying in {}s",
+                    video_id,
+                    attempt + 1,
+                    max_retries,
+                    str(e)[:100],
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error("Failed to download video {}: {}", video_id, e)
+                return False
+
+    return False
+
+
+def download_videos_batch(
+    tasks: list[VideoDownloadTask],
+    lang: str = "en",
+    use_proxy: bool = False,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> tuple[int, int]:
+    """Download multiple videos from a task queue.
+
+    Args:
+        tasks: List of VideoDownloadTask to process
+        lang: Preferred audio language code (default: "en")
+        use_proxy: Whether to use rotating proxy (default: False)
+        progress_callback: Optional callback(completed, total, title)
+
+    Returns:
+        Tuple of (success_count, failure_count)
+    """
+    if not tasks:
+        return 0, 0
+
+    success = 0
+    failed = 0
+    total = len(tasks)
+
+    logger.info("Starting batch video download: {} videos", total)
+
+    for i, task in enumerate(tasks):
+        if progress_callback:
+            progress_callback(i, total, task.title)
+
+        # Check if video already exists
+        expected_path = task.output_path.with_suffix(".mp4")
+        if expected_path.exists():
+            logger.debug("Skipping {} (already exists)", task.video_id)
+            success += 1
+            continue
+
+        if download_video(task.video_id, task.output_path, lang=lang, use_proxy=use_proxy):
+            success += 1
+        else:
+            failed += 1
+
+    logger.info("Video download complete: {}/{} succeeded", success, total)
+    return success, failed

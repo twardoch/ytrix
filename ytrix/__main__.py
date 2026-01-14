@@ -2009,6 +2009,7 @@ priority = {priority}
                     task.source_playlist_id,
                     status=TaskStatus.FAILED,
                     error=str(e),
+                    error_category=api_error.category.name,
                     increment_retry=True,
                 )
                 if not self._json:
@@ -2275,6 +2276,9 @@ priority = {priority}
         max_languages: int = 5,
         delay: float = 0.5,
         subtitle_delay: int = 1000,
+        video: bool = False,
+        video_lang: str = "en",
+        video_proxy: bool = False,
     ) -> str | dict[str, Any] | None:
         """Extract playlist info with subtitles and transcripts.
 
@@ -2283,6 +2287,7 @@ priority = {priority}
           output_folder/Playlist_Title/
             001_Video_Title.en.srt
             001_Video_Title.en.md
+            001_Video_Title.mp4  (if --video)
             playlist.yaml
 
         Args:
@@ -2292,12 +2297,18 @@ priority = {priority}
             delay: Seconds between video processing (default: 0.5)
             subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
                            increase to 2000-3000 if hitting 429 rate limit errors)
+            video: Download videos (highest quality with preferred audio language)
+            video_lang: Preferred audio language for video (default: "en").
+                       Useful for YouTube auto-dubbed videos.
+            video_proxy: Use rotating proxy for video downloads (default: False)
 
         Example:
             ytrix plist2info PLxxx
             ytrix plist2info PLxxx --output ./transcripts
             ytrix plist2info PLxxx --max-languages 3 --delay 1.0
             ytrix plist2info PLxxx --subtitle-delay 2000  # Slower for rate limits
+            ytrix plist2info PLxxx --video  # Also download videos
+            ytrix plist2info PLxxx --video --video-lang de  # German audio preferred
         """
         output_dir = Path(output) if output else Path.cwd()
 
@@ -2321,18 +2332,50 @@ priority = {priority}
 
         playlist_folder = output_dir / info._sanitize_filename(playlist.title)
 
-        if self._json:
-            return self._output(
-                {
-                    "playlist_id": playlist.id,
-                    "title": playlist.title,
-                    "video_count": len(playlist.videos),
-                    "output_folder": str(playlist_folder),
-                }
+        # Deferred video download: process after all metadata/subtitles are done
+        videos_downloaded = 0
+        videos_failed = 0
+        if video and playlist.videos:
+            if not self._json:
+                console.print(f"\n[blue]Downloading {len(playlist.videos)} videos...[/blue]")
+
+            # Build download tasks
+            video_tasks = [
+                info.VideoDownloadTask(
+                    video_id=v.id,
+                    output_path=playlist_folder / info._video_filename(i, v.title),
+                    title=v.title,
+                )
+                for i, v in enumerate(playlist.videos)
+            ]
+
+            def video_progress_cb(idx: int, total: int, title: str) -> None:
+                if not self._json:
+                    console.print(f"  [{idx + 1}/{total}] {title[:50]}...")
+
+            videos_downloaded, videos_failed = info.download_videos_batch(
+                video_tasks,
+                lang=video_lang,
+                use_proxy=video_proxy,
+                progress_callback=video_progress_cb,
             )
+
+        if self._json:
+            result = {
+                "playlist_id": playlist.id,
+                "title": playlist.title,
+                "video_count": len(playlist.videos),
+                "output_folder": str(playlist_folder),
+            }
+            if video:
+                result["videos_downloaded"] = videos_downloaded
+                result["videos_failed"] = videos_failed
+            return self._output(result)
 
         console.print(f"[green]Saved to: {playlist_folder}[/green]")
         console.print(f"  {len(playlist.videos)} videos processed")
+        if video:
+            console.print(f"  {videos_downloaded} videos downloaded, {videos_failed} failed")
         return str(playlist_folder)
 
     def plists2info(
@@ -2343,6 +2386,9 @@ priority = {priority}
         delay: float = 0.5,
         subtitle_delay: int = 1000,
         parallel: bool | None = None,
+        video: bool = False,
+        video_lang: str = "en",
+        video_proxy: bool = False,
     ) -> list[str] | dict[str, Any] | None:
         """Extract info from multiple playlists with subtitles and transcripts.
 
@@ -2352,6 +2398,9 @@ priority = {priority}
         When rotating proxy is configured, playlists are processed in parallel for
         significant speedup (each parallel request uses a different IP).
 
+        Video downloads are deferred until ALL playlists' metadata and subtitles
+        have been processed, then downloaded sequentially at the end.
+
         Args:
             file_path: Text file with playlist URLs/IDs (one per line)
             output: Output directory (default: current directory)
@@ -2360,12 +2409,18 @@ priority = {priority}
             subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
                            increase to 2000-3000 if hitting 429 rate limit errors)
             parallel: Use parallel processing (default: auto based on proxy status)
+            video: Download videos (highest quality with preferred audio language)
+            video_lang: Preferred audio language for video (default: "en").
+                       Useful for YouTube auto-dubbed videos.
+            video_proxy: Use rotating proxy for video downloads (default: False)
 
         Example:
             ytrix plists2info playlists.txt
             ytrix plists2info playlists.txt --output ./transcripts
             ytrix plists2info playlists.txt --max-languages 2 --delay 1.0
             ytrix plists2info playlists.txt --subtitle-delay 2000  # Slower for rate limits
+            ytrix plists2info playlists.txt --video  # Also download all videos
+            ytrix plists2info playlists.txt --video --video-lang de  # German audio
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2389,9 +2444,12 @@ priority = {priority}
 
         results: list[dict[str, Any]] = []
         output_folders: list[str] = []
+        # Collect video download tasks from all playlists for deferred download
+        all_video_tasks: list[info.VideoDownloadTask] = []
 
-        def process_playlist(url: str) -> dict[str, Any]:
-            """Process a single playlist and return result dict."""
+        def process_playlist(url: str) -> tuple[dict[str, Any], list[info.VideoDownloadTask]]:
+            """Process a single playlist and return result dict + video tasks."""
+            video_tasks: list[info.VideoDownloadTask] = []
             try:
                 playlist = info.extract_and_save_playlist_info(
                     url,
@@ -2401,15 +2459,30 @@ priority = {priority}
                     video_delay=delay,
                 )
                 playlist_folder = output_dir / info._sanitize_filename(playlist.title)
-                return {
-                    "playlist_id": playlist.id,
-                    "title": playlist.title,
-                    "video_count": len(playlist.videos),
-                    "output_folder": str(playlist_folder),
-                    "success": True,
-                }
+
+                # Build video download tasks if video flag is set
+                if video:
+                    for i, v in enumerate(playlist.videos):
+                        video_tasks.append(
+                            info.VideoDownloadTask(
+                                video_id=v.id,
+                                output_path=playlist_folder / info._video_filename(i, v.title),
+                                title=v.title,
+                            )
+                        )
+
+                return (
+                    {
+                        "playlist_id": playlist.id,
+                        "title": playlist.title,
+                        "video_count": len(playlist.videos),
+                        "output_folder": str(playlist_folder),
+                        "success": True,
+                    },
+                    video_tasks,
+                )
             except Exception as e:
-                return {"url": url, "error": str(e), "success": False}
+                return ({"url": url, "error": str(e), "success": False}, video_tasks)
 
         if workers > 1 and len(lines) > 1:
             # Parallel playlist processing
@@ -2418,9 +2491,10 @@ priority = {priority}
                 futures = {executor.submit(process_playlist, url): url for url in lines}
                 for future in as_completed(futures):
                     url = futures[future]
-                    result = future.result()
+                    result, video_tasks = future.result()
                     completed += 1
                     results.append(result)
+                    all_video_tasks.extend(video_tasks)
 
                     if not self._json:
                         if result.get("success"):
@@ -2436,12 +2510,9 @@ priority = {priority}
                 if not self._json:
                     console.print(f"\n[bold][{i + 1}/{len(lines)}][/bold] {line}")
 
-                def progress_cb(idx: int, total: int, title: str) -> None:
-                    if not self._json:
-                        console.print(f"    [{idx + 1}/{total}] {title[:50]}...")
-
-                result = process_playlist(line)
+                result, video_tasks = process_playlist(line)
                 results.append(result)
+                all_video_tasks.extend(video_tasks)
 
                 if result.get("success"):
                     output_folders.append(result["output_folder"])
@@ -2451,16 +2522,43 @@ priority = {priority}
                     if not self._json:
                         console.print(f"  [red]Error: {result.get('error')}[/red]")
 
-        if self._json:
-            return self._output(
-                {
-                    "playlists_processed": len(results),
-                    "playlists": results,
-                }
+        # Deferred video download: process ALL videos after ALL metadata/subtitles done
+        videos_downloaded = 0
+        videos_failed = 0
+        if video and all_video_tasks:
+            if not self._json:
+                console.print(
+                    f"\n[blue]Downloading {len(all_video_tasks)} videos "
+                    f"(deferred from {len(output_folders)} playlists)...[/blue]"
+                )
+
+            def video_progress_cb(idx: int, total: int, title: str) -> None:
+                if not self._json:
+                    console.print(f"  [{idx + 1}/{total}] {title[:50]}...")
+
+            videos_downloaded, videos_failed = info.download_videos_batch(
+                all_video_tasks,
+                lang=video_lang,
+                use_proxy=video_proxy,
+                progress_callback=video_progress_cb,
             )
+
+        if self._json:
+            result_dict: dict[str, Any] = {
+                "playlists_processed": len(results),
+                "playlists": results,
+            }
+            if video:
+                result_dict["videos_downloaded"] = videos_downloaded
+                result_dict["videos_failed"] = videos_failed
+            return self._output(result_dict)
 
         success_count = len([r for r in results if r.get("success")])
         console.print(f"\n[green]Done! Processed {success_count}/{len(lines)} playlists.[/green]")
+        if video:
+            console.print(
+                f"[green]Videos: {videos_downloaded} downloaded, {videos_failed} failed[/green]"
+            )
         return output_folders
 
 
