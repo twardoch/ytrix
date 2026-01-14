@@ -8,6 +8,7 @@ This module extracts comprehensive info from YouTube playlists including:
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import tempfile
@@ -18,10 +19,47 @@ from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import-untyped]
+from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
 
 from ytrix.logging import logger
 from ytrix.models import extract_playlist_id
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+def get_proxy_url() -> str | None:
+    """Build rotating proxy URL from environment variables.
+
+    Expects these env vars for Webshare rotating proxies:
+        WEBSHARE_PROXY_USER: Username (e.g., "pfpjkhmy-rotate")
+        WEBSHARE_PROXY_PASS: Password
+        WEBSHARE_DOMAIN_NAME: Proxy host (e.g., "p.webshare.io")
+        WEBSHARE_PROXY_PORT: Port (e.g., "80")
+
+    Returns:
+        Proxy URL like "http://user:pass@host:port" or None if not configured.
+    """
+    user = os.getenv("WEBSHARE_PROXY_USER")
+    password = os.getenv("WEBSHARE_PROXY_PASS")
+    host = os.getenv("WEBSHARE_DOMAIN_NAME")
+    port = os.getenv("WEBSHARE_PROXY_PORT")
+
+    if not all([user, password, host, port]):
+        return None
+
+    return f"http://{user}:{password}@{host}:{port}"
+
+
+# Cache proxy URL at module load
+_proxy_url: str | None = get_proxy_url()
+if _proxy_url:
+    logger.info(
+        "Rotating proxy configured: {}:{}",
+        os.getenv("WEBSHARE_DOMAIN_NAME"),
+        os.getenv("WEBSHARE_PROXY_PORT"),
+    )
 
 # --- Rate limiting and retry logic ---
 
@@ -207,14 +245,16 @@ def get_ytdlp_base_opts(
     skip_download: bool = True,
     extract_flat: bool = False,
     include_rate_limits: bool = True,
+    use_proxy: bool = True,
 ) -> dict[str, Any]:
-    """Get base yt-dlp options with rate limiting.
+    """Get base yt-dlp options with rate limiting and proxy support.
 
     Args:
         quiet: Suppress yt-dlp output (default: True)
         skip_download: Don't download video files (default: True)
         extract_flat: Extract flat metadata only (default: False)
         include_rate_limits: Include rate limiting options (default: True)
+        use_proxy: Use rotating proxy if configured (default: True)
 
     Returns:
         Dict of yt-dlp options ready for YoutubeDL()
@@ -229,6 +269,9 @@ def get_ytdlp_base_opts(
 
     if include_rate_limits:
         opts.update(_rate_limit_config.to_ytdlp_opts())
+
+    if use_proxy and _proxy_url:
+        opts["proxy"] = _proxy_url
 
     return opts
 

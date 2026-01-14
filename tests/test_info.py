@@ -1003,3 +1003,70 @@ class TestGetYtdlpBaseOpts:
         """Can override skip_download setting."""
         opts = info.get_ytdlp_base_opts(skip_download=False)
         assert opts["skip_download"] is False
+
+
+class TestGetProxyUrl:
+    """Tests for get_proxy_url function (Webshare rotating proxy)."""
+
+    def test_returns_none_when_not_configured(self) -> None:
+        """Returns None when env vars are not set."""
+        with patch.dict(
+            "os.environ",
+            {},
+            clear=True,
+        ):
+            # Need to reimport to get fresh value
+            from ytrix.info import get_proxy_url
+
+            assert get_proxy_url() is None
+
+    def test_returns_none_when_partially_configured(self) -> None:
+        """Returns None when only some env vars are set."""
+        with patch.dict(
+            "os.environ",
+            {
+                "WEBSHARE_PROXY_USER": "user",
+                "WEBSHARE_PROXY_PASS": "pass",
+                # Missing WEBSHARE_DOMAIN_NAME and WEBSHARE_PROXY_PORT
+            },
+            clear=True,
+        ):
+            from ytrix.info import get_proxy_url
+
+            assert get_proxy_url() is None
+
+    def test_builds_proxy_url_when_configured(self) -> None:
+        """Builds correct proxy URL when all env vars are set."""
+        with patch.dict(
+            "os.environ",
+            {
+                "WEBSHARE_PROXY_USER": "pfpjkhmy-rotate",
+                "WEBSHARE_PROXY_PASS": "vmnuvzojwpr8",
+                "WEBSHARE_DOMAIN_NAME": "p.webshare.io",
+                "WEBSHARE_PROXY_PORT": "80",
+            },
+            clear=True,
+        ):
+            from ytrix.info import get_proxy_url
+
+            result = get_proxy_url()
+            assert result == "http://pfpjkhmy-rotate:vmnuvzojwpr8@p.webshare.io:80"
+
+    def test_proxy_included_in_ytdlp_opts_when_configured(self) -> None:
+        """Proxy is added to yt-dlp options when configured."""
+        # Mock the module-level _proxy_url variable
+        with patch.object(info, "_proxy_url", "http://user:pass@proxy.example.com:8080"):
+            opts = info.get_ytdlp_base_opts(use_proxy=True)
+            assert opts.get("proxy") == "http://user:pass@proxy.example.com:8080"
+
+    def test_proxy_excluded_when_use_proxy_false(self) -> None:
+        """Proxy is not added when use_proxy=False."""
+        with patch.object(info, "_proxy_url", "http://user:pass@proxy.example.com:8080"):
+            opts = info.get_ytdlp_base_opts(use_proxy=False)
+            assert "proxy" not in opts
+
+    def test_proxy_excluded_when_not_configured(self) -> None:
+        """Proxy is not added when _proxy_url is None."""
+        with patch.object(info, "_proxy_url", None):
+            opts = info.get_ytdlp_base_opts(use_proxy=True)
+            assert "proxy" not in opts
