@@ -302,8 +302,9 @@ Zero-quota reads via yt-dlp where possible, API for authenticated access. See [0
   - External playlist reads: yt-dlp (plist2mlist, plists2mlist, plist2mlists, ls --user)
   - Own playlist listing: API required (private/unlisted access)
   - Video details: yt-dlp with API fallback for private
-- [ ] Implement diff-based writes for yaml2mlist (minimize API calls)
-- [ ] Add `--sleep-interval` to yt-dlp for bulk operations
+- [x] Implement diff-based writes for yaml2mlist (minimize API calls)
+  - `calculate_diff()` in yaml_ops.py uses LCS for minimal moves
+- [x] Add `--sleep-interval` to yt-dlp for bulk operations (YtdlpRateLimitConfig)
 
 ### 10.3 Quota Optimization
 
@@ -341,13 +342,13 @@ Guided OAuth setup. See [05-gcp-automation.md](issues/401/05-gcp-automation.md).
 
 429 vs 403 distinction. See [06-error-handling.md](issues/401/06-error-handling.md).
 
-- [ ] Add `ErrorCategory` enum (RATE_LIMITED, QUOTA_EXCEEDED, PERMISSION_DENIED, etc.)
-- [ ] Add `APIError` dataclass with user_action field
-- [ ] Implement `classify_error()` function
-- [ ] Update `_is_retryable_error()` to use classify_error (no retry for quota)
-- [ ] Add `_log_retry_attempt()` with user-friendly messages
-- [ ] Implement `display_error()` with Rich panels
-- [ ] Add `BatchOperationHandler` for batch error recovery
+- [x] Add `ErrorCategory` enum (RATE_LIMITED, QUOTA_EXCEEDED, PERMISSION_DENIED, etc.)
+- [x] Add `APIError` dataclass with user_action field
+- [x] Implement `classify_error()` function
+- [x] Update `_is_retryable_error()` to use classify_error (no retry for quota)
+- [x] Add `_log_retry_attempt()` with user-friendly messages
+- [x] Implement `display_error()` with Rich panels
+- [x] Add `BatchOperationHandler` for batch error recovery
 - [ ] Update all commands to use new error handling
 
 ### 10.7 CLI Dashboard & Quota Display

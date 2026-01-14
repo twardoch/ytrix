@@ -14,9 +14,10 @@ import re
 import tempfile
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml  # type: ignore[import-untyped]
 from dotenv import load_dotenv
@@ -24,6 +25,9 @@ from yt_dlp import YoutubeDL
 
 from ytrix.logging import logger
 from ytrix.models import extract_playlist_id
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -54,12 +58,23 @@ def get_proxy_url() -> str | None:
 
 # Cache proxy URL at module load
 _proxy_url: str | None = get_proxy_url()
-if _proxy_url:
+_proxy_enabled: bool = _proxy_url is not None
+
+# Proxy timeout: if a proxy is slow, timeout and retry (gets new IP from Webshare)
+PROXY_SOCKET_TIMEOUT = 30  # seconds
+
+if _proxy_enabled:
     logger.info(
-        "Rotating proxy configured: {}:{}",
+        "Rotating proxy configured: {}:{} - using relaxed rate limits and parallelization",
         os.getenv("WEBSHARE_DOMAIN_NAME"),
         os.getenv("WEBSHARE_PROXY_PORT"),
     )
+
+
+def is_proxy_enabled() -> bool:
+    """Check if rotating proxy is configured and enabled."""
+    return _proxy_enabled
+
 
 # --- Rate limiting and retry logic ---
 
@@ -128,9 +143,16 @@ class Throttler:
 
 
 # Global throttlers for yt-dlp operations
-# Base delay is conservative to avoid YouTube rate limits (HTTP 429)
-_ytdlp_throttler = Throttler(delay_ms=500)
-_subtitle_throttler = Throttler(delay_ms=1000)  # Subtitles are more rate-limited
+# With rotating proxy: relaxed delays since each request uses different IP
+# Without proxy: conservative delays to avoid bot detection
+_YTDLP_DELAY_MS = 100 if _proxy_enabled else 500
+_SUBTITLE_DELAY_MS = 200 if _proxy_enabled else 1000
+
+_ytdlp_throttler = Throttler(delay_ms=_YTDLP_DELAY_MS)
+_subtitle_throttler = Throttler(delay_ms=_SUBTITLE_DELAY_MS)
+
+# Max parallel workers for video extraction (only effective with proxy)
+MAX_PARALLEL_WORKERS = 6 if _proxy_enabled else 1
 
 
 def set_ytdlp_throttle_delay(delay_ms: int) -> None:
@@ -207,8 +229,28 @@ class YtdlpRateLimitConfig:
         return opts
 
 
+# Relaxed rate limits when using rotating proxy (each request = different IP)
+_PROXY_RATE_LIMIT_DEFAULTS = YtdlpRateLimitConfig(
+    sleep_interval_requests=0.5,  # 0.5s between requests (vs 5s default)
+    sleep_interval=0.5,  # 0.5s before downloads
+    max_sleep_interval=1.0,  # Max 1s random delay
+    sleep_interval_subtitles=1.0,  # 1s between subtitle downloads
+    ratelimit=None,
+)
+
 # Global rate limit config - can be modified via configure_ytdlp_rate_limits()
 _rate_limit_config = YtdlpRateLimitConfig()
+_rate_limit_config_proxy = _PROXY_RATE_LIMIT_DEFAULTS
+
+
+def get_effective_rate_limit_config() -> YtdlpRateLimitConfig:
+    """Get the effective rate limit config based on proxy status.
+
+    Returns relaxed limits when rotating proxy is enabled.
+    """
+    if _proxy_enabled:
+        return _rate_limit_config_proxy
+    return _rate_limit_config
 
 
 def configure_ytdlp_rate_limits(
@@ -268,10 +310,14 @@ def get_ytdlp_base_opts(
         opts["extract_flat"] = True
 
     if include_rate_limits:
-        opts.update(_rate_limit_config.to_ytdlp_opts())
+        opts.update(get_effective_rate_limit_config().to_ytdlp_opts())
 
     if use_proxy and _proxy_url:
         opts["proxy"] = _proxy_url
+        # Set socket timeout so slow proxies fail fast and retry with new IP
+        opts["socket_timeout"] = PROXY_SOCKET_TIMEOUT
+        # Retry on timeout/connection errors - each retry gets a new proxy IP
+        opts["retries"] = 3
 
     return opts
 
@@ -473,6 +519,79 @@ def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
         like_count=info.get("like_count"),
         subtitles=subtitles,
     )
+
+
+def _extract_video_info_safe(video_id: str) -> tuple[str, VideoInfo | None, str | None]:
+    """Thread-safe wrapper for extract_video_info.
+
+    Returns:
+        Tuple of (video_id, VideoInfo or None, error message or None)
+    """
+    try:
+        video_info = extract_video_info(video_id)
+        return (video_id, video_info, None)
+    except Exception as e:
+        return (video_id, None, str(e))
+
+
+def extract_videos_parallel(
+    video_ids: list[str],
+    max_workers: int | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> tuple[dict[str, VideoInfo], list[tuple[str, str]]]:
+    """Extract video info for multiple videos in parallel.
+
+    Uses ThreadPoolExecutor when rotating proxy is enabled (each thread gets
+    a different IP via server-side rotation). Falls back to sequential
+    extraction when no proxy is configured.
+
+    Args:
+        video_ids: List of YouTube video IDs to extract
+        max_workers: Override max parallel workers (defaults to MAX_PARALLEL_WORKERS)
+        progress_callback: Optional callback(completed, total, video_id)
+
+    Returns:
+        Tuple of (dict mapping video_id to VideoInfo, list of (video_id, error) failures)
+    """
+    workers = max_workers if max_workers is not None else MAX_PARALLEL_WORKERS
+    results: dict[str, VideoInfo] = {}
+    failures: list[tuple[str, str]] = []
+    total = len(video_ids)
+
+    if workers <= 1:
+        # Sequential extraction (no proxy or explicit single worker)
+        for i, video_id in enumerate(video_ids):
+            if progress_callback:
+                progress_callback(i, total, video_id)
+            try:
+                results[video_id] = extract_video_info(video_id)
+            except Exception as e:
+                failures.append((video_id, str(e)))
+        return results, failures
+
+    # Parallel extraction with ThreadPoolExecutor
+    logger.info("Extracting {} videos in parallel (max {} workers)", total, workers)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_extract_video_info_safe, vid): vid for vid in video_ids}
+        completed = 0
+        for future in as_completed(futures):
+            video_id, video_info, error = future.result()
+            completed += 1
+            if progress_callback:
+                progress_callback(completed, total, video_id)
+
+            if video_info:
+                results[video_id] = video_info
+            elif error:
+                failures.append((video_id, error))
+                if _is_rate_limit_error(Exception(error)):
+                    logger.warning("Rate limit on {}, continuing with other videos", video_id)
+                else:
+                    logger.debug("Failed to extract {}: {}", video_id, error)
+
+    logger.info("Parallel extraction complete: {}/{} succeeded", len(results), total)
+    return results, failures
 
 
 def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
@@ -783,6 +902,7 @@ def extract_and_save_playlist_info(
     max_languages: int = 5,
     progress_callback: Callable[[int, int, str], None] | None = None,
     video_delay: float = 0.5,
+    parallel: bool | None = None,
 ) -> PlaylistInfo:
     """Extract full playlist info and save to output directory.
 
@@ -799,11 +919,13 @@ def extract_and_save_playlist_info(
         max_languages: Maximum number of language tracks to download per video
         progress_callback: Optional callback(video_index, total_videos, video_title)
         video_delay: Minimum seconds between processing videos (default: 0.5)
+        parallel: Use parallel extraction (default: auto based on proxy status)
 
     Returns:
         PlaylistInfo with all extracted data
     """
     output_dir = Path(output_dir)
+    use_parallel = parallel if parallel is not None else _proxy_enabled
 
     # Extract playlist metadata
     logger.info("Extracting playlist metadata...")
@@ -815,73 +937,104 @@ def extract_and_save_playlist_info(
 
     total_videos = len(playlist.videos)
     failed_videos: list[str] = []
-    logger.info("Processing {} videos...", total_videos)
+    logger.info("Processing {} videos{}...", total_videos, " (parallel)" if use_parallel else "")
 
-    for i, video in enumerate(playlist.videos):
-        if progress_callback:
-            progress_callback(i, total_videos, video.title)
+    # Build video_id -> position mapping for later
+    video_positions = {v.id: i for i, v in enumerate(playlist.videos)}
 
-        logger.debug("Processing video {}/{}: {}", i + 1, total_videos, video.title)
+    if use_parallel and total_videos > 1:
+        # Parallel extraction phase
+        video_ids = [v.id for v in playlist.videos]
+        video_info_map, failures = extract_videos_parallel(
+            video_ids,
+            progress_callback=progress_callback,
+        )
+        failed_videos.extend(vid for vid, _ in failures)
 
-        # Add delay between videos to be gentle
-        if i > 0 and video_delay > 0:
-            time.sleep(video_delay + random.uniform(0, video_delay * 0.2))
+        # Update playlist videos with extracted info
+        for video in playlist.videos:
+            if video.id in video_info_map:
+                full_video = video_info_map[video.id]
+                video.description = full_video.description
+                video.duration = full_video.duration
+                video.view_count = full_video.view_count
+                video.like_count = full_video.like_count
+                video.subtitles = full_video.subtitles
+    else:
+        # Sequential extraction (original behavior)
+        for i, video in enumerate(playlist.videos):
+            if progress_callback:
+                progress_callback(i, total_videos, video.title)
 
-        try:
-            # Get full video info including subtitles
-            full_video = extract_video_info(video.id)
-            video.description = full_video.description
-            video.duration = full_video.duration
-            video.view_count = full_video.view_count
-            video.like_count = full_video.like_count
-            video.subtitles = full_video.subtitles
+            logger.debug("Processing video {}/{}: {}", i + 1, total_videos, video.title)
 
-            # Generate filename prefix
-            file_prefix = _video_filename(i, video.title)
+            # Add delay between videos to be gentle
+            if i > 0 and video_delay > 0:
+                time.sleep(video_delay + random.uniform(0, video_delay * 0.2))
 
-            # Sort subtitles: manual first, then by language
-            subs = sorted(
-                video.subtitles,
-                key=lambda s: (0 if s.source == "manual" else 1, s.lang),
-            )
+            try:
+                full_video = extract_video_info(video.id)
+                video.description = full_video.description
+                video.duration = full_video.duration
+                video.view_count = full_video.view_count
+                video.like_count = full_video.like_count
+                video.subtitles = full_video.subtitles
+            except Exception as e:
+                failed_videos.append(video.id)
+                if _is_rate_limit_error(e):
+                    logger.warning("Rate limit on video {}, skipping", video.id)
+                else:
+                    logger.warning("Failed to process video {}: {}", video.id, e)
+                continue
 
-            # Limit number of languages
-            seen_langs = set()
-            selected_subs = []
-            for sub in subs:
-                if sub.lang not in seen_langs:
-                    selected_subs.append(sub)
-                    seen_langs.add(sub.lang)
-                if len(selected_subs) >= max_languages:
-                    break
-
-            # Download and save subtitles
-            for sub in selected_subs:
-                content = download_subtitle(sub, video_id=video.id)
-                if not content:
-                    continue
-
-                # Save subtitle file
-                sub_ext = sub.ext if sub.ext in ("srt", "vtt") else "srt"
-                sub_path = playlist_folder / f"{file_prefix}.{sub.lang}.{sub_ext}"
-                sub_path.write_text(content, encoding="utf-8")
-
-                # Convert to transcript and save markdown
-                transcript = subtitle_to_transcript(content, sub.ext)
-                md_content = create_video_markdown(video, sub.lang, transcript)
-                md_path = playlist_folder / f"{file_prefix}.{sub.lang}.md"
-                md_path.write_text(md_content, encoding="utf-8")
-
-                logger.debug("Saved {} subtitle and transcript", sub.lang)
-
-        except Exception as e:
-            failed_videos.append(video.id)
-            is_rate_limit = _is_rate_limit_error(e)
-            if is_rate_limit:
-                logger.warning("Rate limit on video {}, skipping (try again later)", video.id)
-            else:
-                logger.warning("Failed to process video {}: {}", video.id, e)
+    # Process subtitles for all successfully extracted videos
+    for video in playlist.videos:
+        if video.id in failed_videos or not video.subtitles:
             continue
+
+        i = video_positions[video.id]
+        file_prefix = _video_filename(i, video.title)
+
+        # Sort subtitles: manual first, then by language
+        subs = sorted(
+            video.subtitles,
+            key=lambda s: (0 if s.source == "manual" else 1, s.lang),
+        )
+
+        # Limit number of languages
+        seen_langs: set[str] = set()
+        selected_subs = []
+        for sub in subs:
+            if sub.lang not in seen_langs:
+                selected_subs.append(sub)
+                seen_langs.add(sub.lang)
+            if len(selected_subs) >= max_languages:
+                break
+
+        # Download and save subtitles
+        for sub in selected_subs:
+            sub_ext = sub.ext if sub.ext in ("srt", "vtt") else "srt"
+            sub_path = playlist_folder / f"{file_prefix}.{sub.lang}.{sub_ext}"
+            md_path = playlist_folder / f"{file_prefix}.{sub.lang}.md"
+
+            # Skip if both files already exist
+            if sub_path.exists() and md_path.exists():
+                logger.debug("Skipping {} subtitle (already exists)", sub.lang)
+                continue
+
+            content = download_subtitle(sub, video_id=video.id)
+            if not content:
+                continue
+
+            # Save subtitle file
+            sub_path.write_text(content, encoding="utf-8")
+
+            # Convert to transcript and save markdown
+            transcript = subtitle_to_transcript(content, sub.ext)
+            md_content = create_video_markdown(video, sub.lang, transcript)
+            md_path.write_text(md_content, encoding="utf-8")
+
+            logger.debug("Saved {} subtitle and transcript", sub.lang)
 
     # Save playlist.yaml
     playlist_yaml_path = playlist_folder / "playlist.yaml"

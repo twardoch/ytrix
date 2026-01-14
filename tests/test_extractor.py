@@ -436,7 +436,8 @@ class TestExtractChannelPlaylistsWithVideos:
             return mock
 
         with patch("ytrix.extractor.YoutubeDL", side_effect=create_mock):
-            playlists = extract_channel_playlists_with_videos("@test")
+            # Force sequential mode to ensure deterministic call order
+            playlists = extract_channel_playlists_with_videos("@test", parallel=False)
 
         assert len(playlists) == 1
         assert playlists[0].id == "PL1"
@@ -476,7 +477,8 @@ class TestExtractChannelPlaylistsWithVideos:
             return mock
 
         with patch("ytrix.extractor.YoutubeDL", side_effect=create_mock):
-            playlists = extract_channel_playlists_with_videos("@test")
+            # Force sequential mode to ensure deterministic call order
+            playlists = extract_channel_playlists_with_videos("@test", parallel=False)
 
         assert len(playlists) == 2
         # First playlist should have no videos (failed)

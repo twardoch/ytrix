@@ -2303,19 +2303,24 @@ priority = {priority}
         max_languages: int = 5,
         delay: float = 0.5,
         subtitle_delay: int = 1000,
+        parallel: bool | None = None,
     ) -> list[str] | dict[str, Any] | None:
         """Extract info from multiple playlists with subtitles and transcripts.
 
         Processes each playlist from the input file and creates a subfolder for each.
         Downloads all available subtitles and converts them to markdown transcripts.
 
+        When rotating proxy is configured, playlists are processed in parallel for
+        significant speedup (each parallel request uses a different IP).
+
         Args:
             file_path: Text file with playlist URLs/IDs (one per line)
             output: Output directory (default: current directory)
             max_languages: Max subtitle languages per video (default: 5)
-            delay: Seconds between video processing (default: 0.5)
+            delay: Seconds between video processing (default: 0.5, ignored with proxy)
             subtitle_delay: Milliseconds between subtitle downloads (default: 1000,
                            increase to 2000-3000 if hitting 429 rate limit errors)
+            parallel: Use parallel processing (default: auto based on proxy status)
 
         Example:
             ytrix plists2info playlists.txt
@@ -2323,6 +2328,8 @@ priority = {priority}
             ytrix plists2info playlists.txt --max-languages 2 --delay 1.0
             ytrix plists2info playlists.txt --subtitle-delay 2000  # Slower for rate limits
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         output_dir = Path(output) if output else Path.cwd()
 
         # Configure subtitle throttle delay
@@ -2334,49 +2341,76 @@ priority = {priority}
         if not lines:
             raise ValueError("No playlist URLs found in file")
 
+        use_parallel = parallel if parallel is not None else info.is_proxy_enabled()
+        workers = info.MAX_PARALLEL_WORKERS if use_parallel else 1
+
         if not self._json:
-            console.print(f"[blue]Processing {len(lines)} playlists...[/blue]")
+            mode = f"parallel ({workers} workers)" if workers > 1 else "sequential"
+            console.print(f"[blue]Processing {len(lines)} playlists ({mode})...[/blue]")
 
         results: list[dict[str, Any]] = []
         output_folders: list[str] = []
 
-        for i, line in enumerate(lines):
-            if not self._json:
-                console.print(f"\n[bold][{i + 1}/{len(lines)}][/bold] {line}")
-
+        def process_playlist(url: str) -> dict[str, Any]:
+            """Process a single playlist and return result dict."""
             try:
+                playlist = info.extract_and_save_playlist_info(
+                    url,
+                    output_dir,
+                    max_languages=max_languages,
+                    progress_callback=None,  # No per-video progress in parallel mode
+                    video_delay=delay,
+                )
+                playlist_folder = output_dir / info._sanitize_filename(playlist.title)
+                return {
+                    "playlist_id": playlist.id,
+                    "title": playlist.title,
+                    "video_count": len(playlist.videos),
+                    "output_folder": str(playlist_folder),
+                    "success": True,
+                }
+            except Exception as e:
+                return {"url": url, "error": str(e), "success": False}
+
+        if workers > 1 and len(lines) > 1:
+            # Parallel playlist processing
+            completed = 0
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(process_playlist, url): url for url in lines}
+                for future in as_completed(futures):
+                    url = futures[future]
+                    result = future.result()
+                    completed += 1
+                    results.append(result)
+
+                    if not self._json:
+                        if result.get("success"):
+                            title = result.get("title", url)[:50]
+                            console.print(f"[{completed}/{len(lines)}] [green]✓[/green] {title}")
+                            output_folders.append(result["output_folder"])
+                        else:
+                            err = result.get("error")
+                            console.print(f"[{completed}/{len(lines)}] [red]✗[/red] {url}: {err}")
+        else:
+            # Sequential processing (original behavior)
+            for i, line in enumerate(lines):
+                if not self._json:
+                    console.print(f"\n[bold][{i + 1}/{len(lines)}][/bold] {line}")
 
                 def progress_cb(idx: int, total: int, title: str) -> None:
                     if not self._json:
                         console.print(f"    [{idx + 1}/{total}] {title[:50]}...")
 
-                playlist = info.extract_and_save_playlist_info(
-                    line,
-                    output_dir,
-                    max_languages=max_languages,
-                    progress_callback=progress_cb,
-                    video_delay=delay,
-                )
+                result = process_playlist(line)
+                results.append(result)
 
-                playlist_folder = output_dir / info._sanitize_filename(playlist.title)
-                output_folders.append(str(playlist_folder))
-
-                results.append(
-                    {
-                        "playlist_id": playlist.id,
-                        "title": playlist.title,
-                        "video_count": len(playlist.videos),
-                        "output_folder": str(playlist_folder),
-                    }
-                )
-
-                if not self._json:
-                    console.print(f"  [green]Saved: {playlist_folder}[/green]")
-
-            except Exception as e:
-                results.append({"url": line, "error": str(e)})
-                if not self._json:
-                    console.print(f"  [red]Error: {e}[/red]")
+                if result.get("success"):
+                    output_folders.append(result["output_folder"])
+                    if not self._json:
+                        console.print(f"  [green]Saved: {result['output_folder']}[/green]")
+                else:
+                    if not self._json:
+                        console.print(f"  [red]Error: {result.get('error')}[/red]")
 
         if self._json:
             return self._output(
@@ -2386,7 +2420,8 @@ priority = {priority}
                 }
             )
 
-        console.print(f"\n[green]Done! Processed {len(output_folders)} playlists.[/green]")
+        success_count = len([r for r in results if r.get("success")])
+        console.print(f"\n[green]Done! Processed {success_count}/{len(lines)} playlists.[/green]")
         return output_folders
 
 

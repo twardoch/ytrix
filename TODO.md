@@ -2,7 +2,9 @@
 
 ## Urgent
 
-- [ ] When downloading and a proxy turns out to be extremely slow, we should have some timeout and then we retry (Webshare endpoint will give us a different proxy)
+- [x] When downloading and a proxy turns out to be extremely slow, we should have some timeout and then we retry (Webshare endpoint will give us a different proxy)
+  - Added `socket_timeout=30` and `retries=3` to yt-dlp when using rotating proxy
+  - Each retry gets a new IP from Webshare
 
 
 ## Phase 10: ToS-Compliant Architecture & UX Improvements
@@ -83,10 +85,10 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Remove retry for `ErrorCategory.QUOTA_EXCEEDED` (handled in classify_error)
 - [x] Add `_log_retry_attempt()` callback for tenacity
 - [x] Implement `display_error(error)` with Rich panels
-- [ ] Create `BatchOperationHandler` class
-- [ ] Implement `BatchAction` enum (CONTINUE, SKIP_CURRENT, STOP_ALL)
-- [ ] Add `handle_error()` method to BatchOperationHandler
-- [ ] Implement `_pause_batch()` with resume instructions
+- [x] Create `BatchOperationHandler` class
+- [x] Implement `BatchAction` enum (CONTINUE, SKIP_CURRENT, STOP_ALL)
+- [x] Add `handle_error()` method to BatchOperationHandler
+- [x] Implement `_pause_batch()` with resume instructions (as `_show_pause_message()`)
 - [ ] Update `plists2mlists` to use BatchOperationHandler
 - [ ] Add error_category field to journal entries
 

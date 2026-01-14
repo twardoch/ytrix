@@ -1,12 +1,19 @@
 """yt-dlp wrapper for metadata extraction using Python API with caching."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from yt_dlp import YoutubeDL
 
 from ytrix import cache
-from ytrix.info import _is_rate_limit_error, _ytdlp_throttler, get_ytdlp_base_opts
+from ytrix.info import (
+    MAX_PARALLEL_WORKERS,
+    _is_rate_limit_error,
+    _ytdlp_throttler,
+    get_ytdlp_base_opts,
+    is_proxy_enabled,
+)
 from ytrix.logging import logger
 from ytrix.models import Playlist, Video, extract_playlist_id
 
@@ -194,24 +201,77 @@ def extract_channel_playlists(channel_url: str, use_cache: bool = True) -> list[
     return playlists
 
 
-def extract_channel_playlists_with_videos(channel_url: str) -> list[Playlist]:
+def _extract_playlist_safe(playlist_id: str) -> tuple[str, Playlist | None, str | None]:
+    """Thread-safe wrapper for extract_playlist.
+
+    Returns:
+        Tuple of (playlist_id, Playlist or None, error message or None)
+    """
+    try:
+        playlist = extract_playlist(playlist_id)
+        return (playlist_id, playlist, None)
+    except Exception as e:
+        return (playlist_id, None, str(e))
+
+
+def extract_channel_playlists_with_videos(
+    channel_url: str, parallel: bool | None = None
+) -> list[Playlist]:
     """Extract all public playlists from a channel WITH their video lists.
 
     Uses yt-dlp for all reads (0 API quota). Useful for deduplication.
+    With rotating proxy enabled, extracts playlists in parallel.
 
     Args:
         channel_url: Channel URL, handle (@username), or channel ID
+        parallel: Use parallel extraction (default: auto based on proxy status)
 
     Returns:
         List of Playlist objects with videos populated
     """
+    use_parallel = parallel if parallel is not None else is_proxy_enabled()
     playlists = extract_channel_playlists(channel_url)
-    for playlist in playlists:
-        try:
-            full = extract_playlist(playlist.id)
-            playlist.videos = full.videos
-        except Exception:
-            pass  # Skip playlists we can't read
+
+    if not playlists:
+        return playlists
+
+    if use_parallel and len(playlists) > 1:
+        # Parallel extraction with ThreadPoolExecutor
+        logger.info(
+            "Extracting {} playlists in parallel (max {} workers)",
+            len(playlists),
+            MAX_PARALLEL_WORKERS,
+        )
+        playlist_map: dict[str, Playlist] = {}
+
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_WORKERS) as executor:
+            futures = {executor.submit(_extract_playlist_safe, p.id): p for p in playlists}
+            for future in as_completed(futures):
+                playlist_id, full_playlist, error = future.result()
+                if full_playlist:
+                    playlist_map[playlist_id] = full_playlist
+                elif error:
+                    logger.debug("Failed to extract playlist {}: {}", playlist_id, error)
+
+        # Update original playlists with fetched videos
+        for playlist in playlists:
+            if playlist.id in playlist_map:
+                playlist.videos = playlist_map[playlist.id].videos
+
+        logger.info(
+            "Parallel playlist extraction complete: {}/{} succeeded",
+            len(playlist_map),
+            len(playlists),
+        )
+    else:
+        # Sequential extraction (original behavior)
+        for playlist in playlists:
+            try:
+                full = extract_playlist(playlist.id)
+                playlist.videos = full.videos
+            except Exception:
+                pass  # Skip playlists we can't read
+
     return playlists
 
 

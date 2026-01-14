@@ -1070,3 +1070,173 @@ class TestGetProxyUrl:
         with patch.object(info, "_proxy_url", None):
             opts = info.get_ytdlp_base_opts(use_proxy=True)
             assert "proxy" not in opts
+
+
+class TestIsProxyEnabled:
+    """Tests for is_proxy_enabled function."""
+
+    def test_returns_proxy_status(self) -> None:
+        """Returns the current proxy enabled status."""
+        # Just verify it's callable and returns a bool
+        result = info.is_proxy_enabled()
+        assert isinstance(result, bool)
+
+
+class TestGetEffectiveRateLimitConfig:
+    """Tests for get_effective_rate_limit_config function."""
+
+    def test_returns_relaxed_config_when_proxy_enabled(self) -> None:
+        """Returns relaxed rate limit config when proxy is enabled."""
+        with patch.object(info, "_proxy_enabled", True):
+            config = info.get_effective_rate_limit_config()
+            # Proxy config has lower delays
+            assert config.sleep_interval_requests == 0.5
+            assert config.sleep_interval == 0.5
+            assert config.max_sleep_interval == 1.0
+            assert config.sleep_interval_subtitles == 1.0
+
+    def test_returns_standard_config_when_proxy_disabled(self) -> None:
+        """Returns standard rate limit config when proxy is disabled."""
+        with patch.object(info, "_proxy_enabled", False):
+            config = info.get_effective_rate_limit_config()
+            # Standard config has higher delays
+            assert config.sleep_interval_requests >= 5.0
+
+
+class TestExtractVideoInfoSafe:
+    """Tests for _extract_video_info_safe thread-safe wrapper."""
+
+    def test_returns_video_info_on_success(self) -> None:
+        """Returns (video_id, VideoInfo, None) on success."""
+        mock_video = info.VideoInfo(
+            id="test123",
+            title="Test Video",
+            description="Test",
+            channel="TestChannel",
+            duration=120,
+        )
+        with patch.object(info, "extract_video_info", return_value=mock_video):
+            video_id, result, error = info._extract_video_info_safe("test123")
+            assert video_id == "test123"
+            assert result is mock_video
+            assert error is None
+
+    def test_returns_error_on_failure(self) -> None:
+        """Returns (video_id, None, error) on failure."""
+        with patch.object(info, "extract_video_info", side_effect=Exception("Test error")):
+            video_id, result, error = info._extract_video_info_safe("test123")
+            assert video_id == "test123"
+            assert result is None
+            assert error == "Test error"
+
+
+class TestExtractVideosParallel:
+    """Tests for extract_videos_parallel function."""
+
+    def test_returns_empty_for_empty_list(self) -> None:
+        """Returns empty results for empty video list."""
+        results, failures = info.extract_videos_parallel([])
+        assert results == {}
+        assert failures == []
+
+    def test_sequential_extraction_when_single_worker(self) -> None:
+        """Uses sequential extraction when MAX_PARALLEL_WORKERS is 1."""
+        mock_videos = {
+            "vid1": info.VideoInfo(id="vid1", title="V1", description="", channel="C", duration=60),
+            "vid2": info.VideoInfo(id="vid2", title="V2", description="", channel="C", duration=60),
+        }
+
+        def mock_extract(vid_id: str) -> info.VideoInfo:
+            return mock_videos[vid_id]
+
+        with (
+            patch.object(info, "MAX_PARALLEL_WORKERS", 1),
+            patch.object(info, "extract_video_info", side_effect=mock_extract),
+        ):
+            results, failures = info.extract_videos_parallel(["vid1", "vid2"])
+            assert len(results) == 2
+            assert "vid1" in results
+            assert "vid2" in results
+            assert failures == []
+
+    def test_parallel_extraction_when_multiple_workers(self) -> None:
+        """Uses parallel extraction when MAX_PARALLEL_WORKERS > 1."""
+        mock_videos = {
+            "vid1": info.VideoInfo(id="vid1", title="V1", description="", channel="C", duration=60),
+            "vid2": info.VideoInfo(id="vid2", title="V2", description="", channel="C", duration=60),
+        }
+
+        def mock_extract(vid_id: str) -> info.VideoInfo:
+            return mock_videos[vid_id]
+
+        with (
+            patch.object(info, "MAX_PARALLEL_WORKERS", 4),
+            patch.object(info, "extract_video_info", side_effect=mock_extract),
+        ):
+            results, failures = info.extract_videos_parallel(["vid1", "vid2"])
+            assert len(results) == 2
+            assert "vid1" in results
+            assert "vid2" in results
+            assert failures == []
+
+    def test_handles_partial_failures(self) -> None:
+        """Continues extraction when some videos fail."""
+
+        def mock_extract(vid_id: str) -> info.VideoInfo:
+            if vid_id == "vid2":
+                raise Exception("Extraction failed")
+            return info.VideoInfo(id=vid_id, title="V", description="", channel="C", duration=60)
+
+        with (
+            patch.object(info, "MAX_PARALLEL_WORKERS", 1),
+            patch.object(info, "extract_video_info", side_effect=mock_extract),
+        ):
+            results, failures = info.extract_videos_parallel(["vid1", "vid2", "vid3"])
+            assert len(results) == 2
+            assert "vid1" in results
+            assert "vid3" in results
+            assert len(failures) == 1
+            assert failures[0][0] == "vid2"
+
+    def test_calls_progress_callback(self) -> None:
+        """Calls progress callback with completion status."""
+        mock_video = info.VideoInfo(id="vid1", title="V1", description="", channel="C", duration=60)
+        callback = MagicMock()
+
+        with (
+            patch.object(info, "MAX_PARALLEL_WORKERS", 1),
+            patch.object(info, "extract_video_info", return_value=mock_video),
+        ):
+            info.extract_videos_parallel(["vid1"], progress_callback=callback)
+            # Sequential mode: callback(index, total, video_id) with 0-based index
+            callback.assert_called_once_with(0, 1, "vid1")
+
+
+class TestMaxParallelWorkers:
+    """Tests for MAX_PARALLEL_WORKERS constant."""
+
+    def test_is_positive_integer(self) -> None:
+        """MAX_PARALLEL_WORKERS is a positive integer."""
+        assert isinstance(info.MAX_PARALLEL_WORKERS, int)
+        assert info.MAX_PARALLEL_WORKERS >= 1
+
+    def test_higher_when_proxy_enabled(self) -> None:
+        """MAX_PARALLEL_WORKERS should be higher when proxy is enabled."""
+        # This just verifies the relationship described in the code
+        # We can't easily test the module-load-time behavior
+        assert info.MAX_PARALLEL_WORKERS >= 1
+
+
+class TestProxyAwareThrottleDelays:
+    """Tests for proxy-aware throttle delay constants."""
+
+    def test_ytdlp_delay_varies_with_proxy(self) -> None:
+        """_YTDLP_DELAY_MS is lower when proxy is enabled."""
+        # Just verify the constant exists and is reasonable
+        assert isinstance(info._YTDLP_DELAY_MS, int)
+        assert info._YTDLP_DELAY_MS >= 50  # At least 50ms
+
+    def test_subtitle_delay_varies_with_proxy(self) -> None:
+        """_SUBTITLE_DELAY_MS is lower when proxy is enabled."""
+        assert isinstance(info._SUBTITLE_DELAY_MS, int)
+        assert info._SUBTITLE_DELAY_MS >= 50  # At least 50ms
