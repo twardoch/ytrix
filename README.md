@@ -29,25 +29,65 @@ client_secret = "your-client-secret"
 First run will open browser for OAuth authorization. Token is cached in `~/.ytrix/token.json`.
 
 ### Multi-Project Setup (For Heavy Usage)
-YouTube API has a 10,000 units/day quota per project. For separate, legitimate use cases, configure multiple projects:
+YouTube API has a 10,000 units/day quota per project. For separate, legitimate use cases (e.g., personal vs client work), configure multiple projects:
 
 ```toml
 channel_id = "UCxxxxxxxxxx"
 
 [[projects]]
-name = "main"
-client_id = "main-client-id.apps.googleusercontent.com"
-client_secret = "main-secret"
+name = "personal"
+client_id = "personal-client-id.apps.googleusercontent.com"
+client_secret = "personal-secret"
+quota_group = "personal"  # Group for context switching
+priority = 0               # Lower = preferred
 
 [[projects]]
-name = "backup"
-client_id = "backup-client-id.apps.googleusercontent.com"
-client_secret = "backup-secret"
+name = "client-work"
+client_id = "client-client-id.apps.googleusercontent.com"
+client_secret = "client-secret"
+quota_group = "client"
+priority = 0
 ```
 
-ytrix can switch context within the same `quota_group` when a project's daily quota is exhausted
-(use `--quota-group`). Do NOT use multiple projects to bypass quota limits for one use case.
-Request more quota: [Quota extension request form](https://support.google.com/youtube/contact/yt_api_form). See `ytrix config` for full setup instructions.
+**Context Switching**: ytrix automatically switches to another project in the same `quota_group` when:
+- Daily quota is exhausted (403 quotaExceeded)
+- Rate limits persist after retries (429 Rate Limited)
+
+**Commands**:
+```bash
+ytrix projects                    # Show all projects and quota status
+ytrix projects_auth personal      # Authenticate a specific project
+ytrix --project personal ...      # Force use specific project
+ytrix --quota-group client ...    # Restrict to projects in group
+```
+
+**Important**: Do NOT use multiple projects to bypass quota limits for one use case—this violates Google's ToS. Request more quota: [Quota extension form](https://support.google.com/youtube/contact/yt_api_form).
+
+### Quota Management
+```bash
+ytrix quota_status                # Show current quota usage
+ytrix quota_status --all-projects # Show all projects
+```
+
+Quota costs:
+- **Playlist create**: 50 units
+- **Video add/remove**: 50 units each
+- **Playlist update**: 51 units
+
+A batch copy of 10 playlists with 100 videos each ≈ 50,500 units (5 projects at 10k each).
+
+### Error Recovery
+**Rate Limits (429)**: Automatic retry with exponential backoff. After 3 consecutive rate limits on a project, ytrix switches to another project in the same quota group.
+
+**Quota Exhaustion (403)**: Cannot retry until midnight PT. Use `--resume` to continue:
+```bash
+ytrix plists2mlists playlists.txt --resume
+```
+
+**Failed Operations**: The journal tracks all operations. Review status:
+```bash
+ytrix journal_status
+```
 
 ## Global Flags
 ```bash
