@@ -29,6 +29,46 @@ from ytrix.models import extract_playlist_id
 T = TypeVar("T")
 R = TypeVar("R")
 
+
+class YtdlpLogger:
+    """Custom logger for yt-dlp that captures messages with context.
+
+    Suppresses yt-dlp's default stderr output and reformats error messages
+    to include video ID and other context for better debugging.
+    """
+
+    def __init__(self, video_id: str | None = None, context: str | None = None) -> None:
+        self.video_id = video_id
+        self.context = context or ""
+
+    def _format_msg(self, msg: str) -> str:
+        """Add video ID context to message."""
+        parts = []
+        if self.video_id:
+            parts.append(f"[{self.video_id}]")
+        if self.context:
+            parts.append(f"({self.context})")
+        prefix = " ".join(parts)
+        return f"{prefix} {msg}" if prefix else msg
+
+    def debug(self, msg: str) -> None:
+        if msg.startswith("[debug]"):
+            return  # Suppress yt-dlp debug spam
+        logger.debug(self._format_msg(msg))
+
+    def info(self, msg: str) -> None:
+        # Only log substantive info, skip download progress
+        if msg.startswith("[download]") or "Downloading" in msg:
+            logger.debug(self._format_msg(msg))
+        else:
+            logger.debug(self._format_msg(msg))
+
+    def warning(self, msg: str) -> None:
+        logger.warning(self._format_msg(msg))
+
+    def error(self, msg: str) -> None:
+        logger.error(self._format_msg(msg))
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -124,13 +164,19 @@ class Throttler:
         if self._delay_ms > self._base_delay_ms:
             self._delay_ms = max(self._base_delay_ms, int(self._delay_ms * 0.9))
 
-    def on_error(self, is_rate_limit: bool = False) -> None:
-        """Called after error - increase delay with exponential backoff."""
+    def on_error(self, is_rate_limit: bool = False, context: str | None = None) -> None:
+        """Called after error - increase delay with exponential backoff.
+
+        Args:
+            is_rate_limit: Whether this was a 429 rate limit error
+            context: Optional context string (e.g., video ID) for logging
+        """
         self._consecutive_errors += 1
+        ctx = f" [{context}]" if context else ""
         if is_rate_limit:
             # Rate limit: aggressive backoff
             self._delay_ms = min(30000, self._delay_ms * 2 + 1000)
-            logger.warning("Rate limit hit, throttle delay now {}ms", self._delay_ms)
+            logger.warning("Rate limit hit{}, throttle delay now {}ms", ctx, self._delay_ms)
         else:
             # Other error: modest increase
             self._delay_ms = min(10000, int(self._delay_ms * 1.5))
@@ -450,6 +496,7 @@ def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
             opts = get_ytdlp_base_opts()
             opts["writesubtitles"] = False
             opts["writeautomaticsub"] = False
+            opts["logger"] = YtdlpLogger(video_id=video_id, context="extract")
             with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 info = ydl.extract_info(url, download=False)
                 if info is None:
@@ -458,12 +505,12 @@ def extract_video_info(video_id: str, max_retries: int = 5) -> VideoInfo:
             break
         except Exception as e:
             is_rate_limit = _is_rate_limit_error(e)
-            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)
+            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit, context=video_id)
 
             if attempt < max_retries - 1 and is_rate_limit:
                 delay = _ytdlp_throttler.get_retry_delay(attempt)
                 logger.warning(
-                    "Rate limit on video {}, retry {}/{} in {:.1f}s",
+                    "[{}] Rate limit, retry {}/{} in {:.1f}s",
                     video_id,
                     attempt + 1,
                     max_retries,
@@ -586,9 +633,9 @@ def extract_videos_parallel(
             elif error:
                 failures.append((video_id, error))
                 if _is_rate_limit_error(Exception(error)):
-                    logger.warning("Rate limit on {}, continuing with other videos", video_id)
+                    logger.warning("[{}] Rate limit, continuing with other videos", video_id)
                 else:
-                    logger.debug("Failed to extract {}: {}", video_id, error)
+                    logger.warning("[{}] Failed to extract: {}", video_id, error)
 
     logger.info("Parallel extraction complete: {}/{} succeeded", len(results), total)
     return results, failures
@@ -612,6 +659,7 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
         _ytdlp_throttler.wait()
         try:
             opts = get_ytdlp_base_opts(extract_flat=True)
+            opts["logger"] = YtdlpLogger(video_id=playlist_id, context="playlist")
             with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 data = ydl.extract_info(url, download=False)
                 if data is None:
@@ -620,12 +668,12 @@ def extract_playlist_info(url_or_id: str, max_retries: int = 5) -> PlaylistInfo:
             break
         except Exception as e:
             is_rate_limit = _is_rate_limit_error(e)
-            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit)
+            _ytdlp_throttler.on_error(is_rate_limit=is_rate_limit, context=playlist_id)
 
             if attempt < max_retries - 1 and is_rate_limit:
                 delay = _ytdlp_throttler.get_retry_delay(attempt)
                 logger.warning(
-                    "Rate limit on playlist {}, retry {}/{} in {:.1f}s",
+                    "[{}] Playlist rate limit, retry {}/{} in {:.1f}s",
                     playlist_id,
                     attempt + 1,
                     max_retries,
@@ -683,11 +731,12 @@ def download_subtitle(
         logger.warning("video_id required for subtitle download")
         return None
 
+    context = f"{video_id}/{sub.lang}"
     for attempt in range(max_retries):
         _subtitle_throttler.wait()
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Configure yt-dlp for subtitle-only download
+                # Configure yt-dlp for subtitle-only download with custom logger
                 opts = get_ytdlp_base_opts()
                 opts.update(
                     {
@@ -696,6 +745,7 @@ def download_subtitle(
                         "subtitleslangs": [sub.lang],
                         "subtitlesformat": sub.ext if sub.ext in ("srt", "vtt") else "srt",
                         "outtmpl": f"{tmpdir}/%(id)s.%(ext)s",
+                        "logger": YtdlpLogger(video_id=video_id, context=f"subtitle/{sub.lang}"),
                     }
                 )
 
@@ -713,20 +763,28 @@ def download_subtitle(
                 if sub_files:
                     content = sub_files[0].read_text(encoding="utf-8")
                     _subtitle_throttler.on_success()
+                    logger.debug("[{}] Downloaded {} subtitle", video_id, sub.lang)
                     return content
                 else:
-                    logger.debug("No subtitle file found for {} lang={}", video_id, sub.lang)
+                    logger.debug("[{}] No subtitle file found for lang={}", video_id, sub.lang)
                     return None
 
         except Exception as e:
             is_rate_limit = _is_rate_limit_error(e)
-            _subtitle_throttler.on_error(is_rate_limit=is_rate_limit)
+            _subtitle_throttler.on_error(is_rate_limit=is_rate_limit, context=context)
             if is_rate_limit and attempt < max_retries - 1:
                 delay = _subtitle_throttler.get_retry_delay(attempt)
-                logger.debug("Subtitle rate limit, retry in {:.1f}s", delay)
+                logger.warning(
+                    "[{}] Subtitle rate limit ({}), retry {}/{} in {:.1f}s",
+                    video_id,
+                    sub.lang,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
                 time.sleep(delay)
                 continue
-            logger.warning("Failed to download subtitle for {}: {}", video_id, e)
+            logger.warning("[{}] Failed to download {} subtitle: {}", video_id, sub.lang, e)
             return None
 
     return None
@@ -985,9 +1043,9 @@ def extract_and_save_playlist_info(
             except Exception as e:
                 failed_videos.append(video.id)
                 if _is_rate_limit_error(e):
-                    logger.warning("Rate limit on video {}, skipping", video.id)
+                    logger.warning("[{}] Rate limit, skipping video", video.id)
                 else:
-                    logger.warning("Failed to process video {}: {}", video.id, e)
+                    logger.warning("[{}] Failed to process video: {}", video.id, e)
                 continue
 
     # Process subtitles for all successfully extracted videos
@@ -1035,7 +1093,7 @@ def extract_and_save_playlist_info(
 
             # Skip if both files already exist
             if sub_path.exists() and md_path.exists():
-                logger.debug("Skipping {} subtitle (already exists)", sub.lang)
+                logger.info("[{}] Skipped (exists): {}", video.id, sub_path.name)
                 continue
 
             content = download_subtitle(sub, video_id=video.id)
@@ -1044,23 +1102,23 @@ def extract_and_save_playlist_info(
 
             # Save subtitle file
             sub_path.write_text(content, encoding="utf-8")
+            logger.info("[{}] Saved: {}", video.id, sub_path)
 
             # Convert to transcript and save markdown
             transcript = subtitle_to_transcript(content, sub.ext)
             md_content = create_video_markdown(video, sub.lang, transcript)
             md_path.write_text(md_content, encoding="utf-8")
-
-            logger.debug("Saved {} subtitle and transcript", sub.lang)
+            logger.info("[{}] Saved: {}", video.id, md_path)
 
     # Save playlist.yaml
     playlist_yaml_path = playlist_folder / "playlist.yaml"
     with open(playlist_yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(playlist.to_dict(), f, default_flow_style=False, allow_unicode=True, width=120)
+    logger.info("Saved: {}", playlist_yaml_path)
 
     # Report summary
     success_count = total_videos - len(failed_videos)
-    logger.info("Saved playlist info to {}", playlist_folder)
-    logger.info("Processed {}/{} videos successfully", success_count, total_videos)
+    logger.info("Playlist: {} ({}/{} videos)", playlist_folder.name, success_count, total_videos)
     if failed_videos:
         logger.warning("Failed videos ({}): {}", len(failed_videos), ", ".join(failed_videos[:5]))
         if len(failed_videos) > 5:
@@ -1126,6 +1184,7 @@ def download_video(
                 "format": format_str,
                 "outtmpl": str(output_path) + ".%(ext)s",
                 "merge_output_format": "mp4",
+                "logger": YtdlpLogger(video_id=video_id, context="download"),
                 # Prefer MP4 container for compatibility
                 "postprocessors": [
                     {
@@ -1144,14 +1203,14 @@ def download_video(
             with YoutubeDL(opts) as ydl:  # pyright: ignore[reportArgumentType]
                 ydl.download([url])
 
-            logger.debug("Downloaded video: {}", video_id)
+            logger.info("[{}] Downloaded video to {}", video_id, output_path)
             return True
 
         except Exception as e:
             if attempt < max_retries - 1:
                 delay = 2 ** (attempt + 1)  # Exponential backoff: 2, 4, 8s
                 logger.warning(
-                    "Video download failed for {} (attempt {}/{}): {}, retrying in {}s",
+                    "[{}] Download failed (attempt {}/{}): {}, retrying in {}s",
                     video_id,
                     attempt + 1,
                     max_retries,
@@ -1160,7 +1219,7 @@ def download_video(
                 )
                 time.sleep(delay)
             else:
-                logger.error("Failed to download video {}: {}", video_id, e)
+                logger.error("[{}] Failed to download video: {}", video_id, e)
                 return False
 
     return False
