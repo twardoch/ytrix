@@ -154,14 +154,14 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `test_failover_within_same_group` (test_handle_quota_exhausted_switches_within_same_group)
 - [x] Add `test_no_cross_group_failover` (test_handle_quota_exhausted_does_not_cross_groups)
 - [ ] Create `tests/test_journal.py` for enhanced journal
-- [ ] Create `tests/test_dashboard.py` for Rich display
+- [x] Create `tests/test_dashboard.py` for Rich display (25 tests, 100% coverage)
 - [ ] Mark integration tests with `@pytest.mark.integration`
-- [ ] Update README.md with multi-project setup section
-- [ ] Update README.md with quota management section
-- [ ] Update README.md with error recovery section
+- [x] Update README.md with multi-project setup section
+- [x] Update README.md with quota management section
+- [x] Update README.md with error recovery section
 - [ ] Create `docs/errors.md` with error catalog
 - [x] Update CHANGELOG.md with Phase 10 changes
-- [ ] Run coverage report and ensure 80%+ for new modules
+- [x] Run coverage report and ensure 80%+ for new modules (projects: 98%, quota: 99%, dashboard: 100%)
 
 ## Future (Not Planned)
 - [ ] Playlist description templates
