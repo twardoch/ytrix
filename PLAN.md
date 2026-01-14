@@ -233,7 +233,7 @@ The `plists2mlists` command hits HTTP 429 `RATE_LIMIT_EXCEEDED` errors because:
 - [x] 29 unit tests for info module
 - [x] Live testing with example playlists
 
-## Phase 9: Multi-Project Credential Rotation - COMPLETE
+## Phase 9: Multi-Project Context Switching - COMPLETE
 
 ### 9.1 Problem Analysis
 
@@ -242,7 +242,7 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - Users must wait until midnight PT for reset
 - No way to distribute load across multiple projects
 
-**Solution**: Support multiple GCP projects with automatic credential rotation.
+**Solution**: Support multiple GCP projects with context switching (ToS-compliant).
 
 ### 9.2 Multi-Project Configuration - COMPLETE
 
@@ -251,11 +251,11 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 - [x] Backwards compatible: single `[oauth]` section still works
 - [x] Store per-project tokens in ~/.ytrix/tokens/{project_name}.json
 
-### 9.3 Credential Rotation Logic - COMPLETE
+### 9.3 Context Switching Logic - COMPLETE
 
 - [x] Create `projects.py` module for project management
 - [x] Track quota usage per project (persist to ~/.ytrix/quota_state.json)
-- [x] Auto-rotate to next project when quota exhausted (403 quotaExceeded)
+- [x] Auto-switch to next project when quota exhausted (403 quotaExceeded)
 - [x] Round-robin selection with quota awareness
 - [x] `--project` flag to force specific project
 
@@ -276,8 +276,8 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 ### 9.6 Documentation - COMPLETE
 
 - [x] SETUP.txt: Add multi-project setup instructions
-- [x] README: Document project rotation
-- [x] Help text: Explain --project flag and rotation behavior
+- [x] README: Document project context switching
+- [x] Help text: Explain --project flag and context switching behavior
 
 ## Phase 10: ToS-Compliant Architecture & UX Improvements
 
@@ -285,9 +285,9 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 
 ### 10.1 ToS Compliance & Architecture Pivot
 
-**Critical finding**: Multi-project quota rotation for a single application is explicitly forbidden by Google's ToS (Section III.D.1.c). See [01-overview-compliance.md](issues/401/01-overview-compliance.md).
+**Critical finding**: Multi-project quota circumvention for a single application is explicitly forbidden by Google's ToS (Section III.D.1.c). See [01-overview-compliance.md](issues/401/01-overview-compliance.md).
 
-- [ ] Rename "rotation" to "context switching" throughout codebase
+- [x] Rename "rotation" to "context switching" throughout codebase
 - [x] Add `quota_group` field to ProjectConfig for purpose-based grouping
 - [x] Restrict automatic project switching to within same quota_group
 - [x] Add ToS reminder on first run or after update
@@ -296,13 +296,14 @@ YouTube Data API has a 10,000 units/day quota per GCP project. For heavy users:
 
 ### 10.2 Hybrid Read/Write Architecture
 
-Zero-quota reads via yt-dlp, API only for writes. See [02-hybrid-architecture.md](issues/401/02-hybrid-architecture.md).
+Zero-quota reads via yt-dlp where possible, API for authenticated access. See [02-hybrid-architecture.md](issues/401/02-hybrid-architecture.md).
 
-- [ ] Audit all commands to ensure reads use yt-dlp only
-- [ ] Deprecate or remove any API-based read functions
+- [x] Audit all commands for read path usage
+  - External playlist reads: yt-dlp (plist2mlist, plists2mlist, plist2mlists, ls --user)
+  - Own playlist listing: API required (private/unlisted access)
+  - Video details: yt-dlp with API fallback for private
 - [ ] Implement diff-based writes for yaml2mlist (minimize API calls)
 - [ ] Add `--sleep-interval` to yt-dlp for bulk operations
-- [ ] Implement smart fallback: yt-dlp → API (with warning)
 
 ### 10.3 Quota Optimization
 
@@ -403,7 +404,7 @@ Test coverage and docs. See [09-testing-documentation.md](issues/401/09-testing-
 - [x] Git-tag-based semantic versioning via hatch-vcs
 - [x] Batch operations complete without 429 errors under normal load
 - [x] Graceful handling of quota limits with clear user guidance
-- [x] Multi-project credential rotation (Phase 9 complete)
+- [x] Multi-project context switching (Phase 9 complete)
 
 ### Phase 10 Success Criteria
 

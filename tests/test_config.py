@@ -282,3 +282,151 @@ class TestGetTokenPathMultiProject:
         with patch("ytrix.config.Path.home", return_value=tmp_path):
             result = get_token_path("my-project")
             assert result == tmp_path / ".ytrix" / "tokens" / "my-project.json"
+
+
+class TestProjectConfigNewFields:
+    """Tests for new ProjectConfig fields (quota_group, environment, priority)."""
+
+    def test_default_values(self) -> None:
+        """ProjectConfig has sensible defaults for new fields."""
+        project = ProjectConfig(name="test", client_id="id", client_secret="s")
+        assert project.quota_group == "default"
+        assert project.environment == "prod"
+        assert project.priority == 0
+
+    def test_custom_quota_group(self) -> None:
+        """ProjectConfig accepts custom quota_group."""
+        project = ProjectConfig(
+            name="test",
+            client_id="id",
+            client_secret="s",
+            quota_group="personal",
+        )
+        assert project.quota_group == "personal"
+
+    def test_custom_environment(self) -> None:
+        """ProjectConfig accepts valid environment values."""
+        for env in ["dev", "staging", "prod"]:
+            project = ProjectConfig(
+                name="test",
+                client_id="id",
+                client_secret="s",
+                environment=env,
+            )
+            assert project.environment == env
+
+    def test_invalid_environment_raises(self) -> None:
+        """ProjectConfig rejects invalid environment values."""
+        with pytest.raises(ValueError, match="Environment must be"):
+            ProjectConfig(
+                name="test",
+                client_id="id",
+                client_secret="s",
+                environment="invalid",
+            )
+
+    def test_custom_priority(self) -> None:
+        """ProjectConfig accepts priority values."""
+        project = ProjectConfig(
+            name="test",
+            client_id="id",
+            client_secret="s",
+            priority=5,
+        )
+        assert project.priority == 5
+
+    def test_negative_priority_raises(self) -> None:
+        """ProjectConfig rejects negative priority."""
+        with pytest.raises(ValueError, match="non-negative"):
+            ProjectConfig(
+                name="test",
+                client_id="id",
+                client_secret="s",
+                priority=-1,
+            )
+
+
+class TestConfigQuotaGroupHelpers:
+    """Tests for Config quota_group helper methods."""
+
+    def test_get_projects_by_quota_group(self) -> None:
+        """get_projects_by_quota_group filters and sorts correctly."""
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(
+                    name="p1",
+                    client_id="id1",
+                    client_secret="s1",
+                    quota_group="personal",
+                    priority=1,
+                ),
+                ProjectConfig(
+                    name="p2",
+                    client_id="id2",
+                    client_secret="s2",
+                    quota_group="personal",
+                    priority=0,
+                ),
+                ProjectConfig(
+                    name="p3",
+                    client_id="id3",
+                    client_secret="s3",
+                    quota_group="client-a",
+                    priority=0,
+                ),
+            ],
+        )
+        personal = config.get_projects_by_quota_group("personal")
+        assert len(personal) == 2
+        # Should be sorted by priority
+        assert personal[0].name == "p2"  # priority=0
+        assert personal[1].name == "p1"  # priority=1
+
+    def test_get_projects_by_quota_group_empty(self) -> None:
+        """get_projects_by_quota_group returns empty for non-existent group."""
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(name="p1", client_id="id1", client_secret="s1"),
+            ],
+        )
+        result = config.get_projects_by_quota_group("nonexistent")
+        assert result == []
+
+    def test_get_quota_groups(self) -> None:
+        """get_quota_groups returns unique sorted groups."""
+        config = Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(
+                    name="p1",
+                    client_id="id1",
+                    client_secret="s1",
+                    quota_group="personal",
+                ),
+                ProjectConfig(
+                    name="p2",
+                    client_id="id2",
+                    client_secret="s2",
+                    quota_group="personal",
+                ),
+                ProjectConfig(
+                    name="p3",
+                    client_id="id3",
+                    client_secret="s3",
+                    quota_group="client-a",
+                ),
+            ],
+        )
+        groups = config.get_quota_groups()
+        assert groups == ["client-a", "personal"]  # Sorted
+
+    def test_get_quota_groups_legacy(self) -> None:
+        """get_quota_groups returns 'default' for legacy config."""
+        config = Config(
+            channel_id="UC123",
+            oauth=OAuthConfig(client_id="id", client_secret="s"),
+        )
+        groups = config.get_quota_groups()
+        assert groups == ["default"]

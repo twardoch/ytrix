@@ -17,17 +17,17 @@ Full specification: [issues/401/](issues/401/)
 - [x] Add validation in `projects_add` to prevent > 5 projects in same group
 
 ### 10.2 Hybrid Read/Write Architecture ([02-hybrid-architecture.md](issues/401/02-hybrid-architecture.md))
-- [ ] Audit `plist2mlist` command - verify reads use extractor.py only
-- [ ] Audit `plists2mlist` command - verify reads use extractor.py only
-- [ ] Audit `plist2mlists` command - verify reads use extractor.py only
-- [ ] Audit `mlists2yaml` command - verify reads use extractor.py only
-- [ ] Audit `yaml2mlists` command - verify reads use extractor.py only
-- [ ] Audit `ls` command - verify reads use extractor.py only
-- [ ] Add deprecation warning to any API read functions in api.py
+- [x] Audit `plist2mlist` command - uses yt-dlp for source, API for writes only
+- [x] Audit `plists2mlist` command - uses yt-dlp for source, API for writes only
+- [x] Audit `plist2mlists` command - uses yt-dlp for source, API for writes only
+- [x] Audit `mlists2yaml` command - hybrid: API to list own, yt-dlp for video details
+- [x] Audit `yaml2mlists` command - API required for private playlist access
+- [x] Audit `ls` command - yt-dlp for --user, API for own (private access needed)
 - [ ] Implement `calculate_diff()` in yaml_ops.py for minimal writes
 - [ ] Add `sleep_interval=1` to yt-dlp options for bulk operations
-- [ ] Add `--api-fallback` flag for yt-dlp failures (with quota warning)
-- [ ] Implement `get_playlist_smart()` with fallback logic
+
+Note: API reads are required for own private/unlisted playlists (yt-dlp can't access without login).
+The hybrid approach is correct: yt-dlp for external reads, API for own playlist management.
 
 ### 10.3 Quota Optimization ([03-quota-optimization.md](issues/401/03-quota-optimization.md))
 - [ ] Add `batch_video_metadata(client, video_ids)` to api.py

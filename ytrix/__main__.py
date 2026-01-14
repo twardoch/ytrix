@@ -49,6 +49,7 @@ class YtrixCLI:
         json_output: bool = False,
         throttle: int = 200,
         project: str | None = None,
+        quota_group: str | None = None,
     ) -> None:
         """Initialize CLI with options.
 
@@ -57,20 +58,25 @@ class YtrixCLI:
             json_output: Output results as JSON instead of human-readable text
             throttle: Milliseconds between API write calls (default 200, 0 to disable)
             project: Force using a specific project for API calls (multi-project setup)
+            quota_group: Restrict context switching to projects in this quota group
         """
         configure_logging(verbose)
         self._json = json_output
         self._verbose = verbose
         self._project = project
+        self._quota_group = quota_group
         # Set API throttle delay
         api.set_throttle_delay(throttle)
         logger.debug(
-            "ytrix initialized with verbose={}, json={}, throttle={}ms, project={}",
+            "ytrix initialized with verbose={}, json={}, throttle={}ms, project={}, quota_group={}",
             verbose,
             json_output,
             throttle,
             project,
+            quota_group,
         )
+        # Show ToS reminder on first run after update
+        self._check_tos_reminder()
 
     def _output(self, data: dict[str, Any]) -> dict[str, Any] | None:
         """Output result as JSON or print nothing (human output already printed)."""
@@ -78,15 +84,61 @@ class YtrixCLI:
             print(json.dumps(data, indent=2))
         return data if self._json else None
 
+    def _check_tos_reminder(self) -> None:
+        """Show ToS reminder on first run or after version update."""
+        if self._json:
+            return  # Skip for JSON output mode
+
+        config_dir = get_config_dir()
+        version_file = config_dir / ".last_version"
+
+        # Check if this is a new version or first run
+        last_version = ""
+        if version_file.exists():
+            last_version = version_file.read_text().strip()
+
+        if last_version != __version__:
+            self._show_tos_reminder()
+            version_file.write_text(__version__)
+
+    def _show_tos_reminder(self) -> None:
+        """Display ToS compliance reminder for multi-project setups."""
+        console.print()
+        console.print("[bold yellow]📋 Multi-Project ToS Reminder[/bold yellow]")
+        console.print()
+        console.print(
+            "If you use multiple GCP projects, please ensure compliance with\n"
+            "Google's Terms of Service (Section III.D.1.c):"
+        )
+        console.print()
+        console.print(
+            "  [dim]• Each project should serve a distinct purpose (e.g., personal vs client)[/dim]"
+        )
+        console.print("  [dim]• Do NOT use multiple projects to circumvent quota limits[/dim]")
+        console.print("  [dim]• Use --quota-group to group projects by purpose[/dim]")
+        console.print()
+        console.print(
+            "[dim]Quota increase requests: "
+            "https://support.google.com/youtube/contact/yt_api_form[/dim]"
+        )
+        console.print()
+
     def _get_youtube_client(self, config: Config) -> Any:
         """Get YouTube API client, optionally using a specific project.
 
-        If --project was specified, selects that project before getting credentials.
+        If --project was specified, selects that project.
+        If --quota-group was specified, selects from that group.
         """
+        manager = get_project_manager(config)
+
         if self._project:
-            manager = get_project_manager(config)
             manager.select_project(self._project)
             return manager.get_client()
+
+        if self._quota_group:
+            manager.select_context(quota_group=self._quota_group)
+            return manager.get_client()
+
         return api.get_youtube_client(config)
 
     def version(self) -> None:
@@ -129,8 +181,10 @@ class YtrixCLI:
         console.print("  projects_add   Add new project interactively")
         console.print("  projects_auth  Authenticate a project")
         console.print("  projects_select Select active project")
+        console.print("  gcp_init       Create new GCP project from scratch")
         console.print("  gcp_clone      Clone GCP project for quota expansion")
         console.print("  gcp_inventory  Show GCP project resources")
+        console.print("  gcp_guide      Show OAuth setup guide for a project")
         console.print()
         console.print("[bold]Utilities:[/bold]")
         console.print("  config         Show/setup configuration")
@@ -321,19 +375,53 @@ class YtrixCLI:
         console.print("[bold]Configured Projects[/bold]")
         console.print()
 
+        # Group projects by quota_group
+        groups: dict[str, list[dict[str, Any]]] = {}
         for proj in summary:
-            name = proj["name"]
-            current = proj["current"]
-            used = proj["quota_used"]
-            remaining = proj["quota_remaining"]
-            limit = proj["quota_limit"]
-            exhausted = proj["is_exhausted"]
+            group = str(proj.get("quota_group", "default"))
+            if group not in groups:
+                groups[group] = []
+            groups[group].append(proj)
 
-            marker = "[green]→[/green] " if current else "  "
-            status = "[red](exhausted)[/red]" if exhausted else ""
+        for group_name, projects in sorted(groups.items()):
+            console.print(f"[dim]── {group_name} ──[/dim]")
+            for proj in projects:
+                name = proj["name"]
+                current = proj["current"]
+                used = proj["quota_used"]
+                remaining = proj["quota_remaining"]
+                limit = proj["quota_limit"]
+                exhausted = proj["is_exhausted"]
+                env = proj.get("environment", "prod")
 
-            console.print(f"{marker}[bold]{name}[/bold] {status}")
-            console.print(f"    Quota: {used:,} / {limit:,} used, {remaining:,} remaining")
+                # Active marker and status
+                marker = "[green]→[/green] " if current else "  "
+                active_tag = "[ACTIVE] " if current else ""
+                status = "[red](exhausted)[/red]" if exhausted else ""
+                env_tag = f"[dim][{env}][/dim] " if env != "prod" else ""
+
+                console.print(f"{marker}[bold]{name}[/bold] {active_tag}{env_tag}{status}")
+
+                # Quota bar visualization
+                pct = (used / limit * 100) if limit > 0 else 0
+                if pct >= 90:
+                    bar_color = "red"
+                elif pct >= 70:
+                    bar_color = "yellow"
+                else:
+                    bar_color = "green"
+                console.print(
+                    f"    Quota: [{bar_color}]{used:,}[/{bar_color}] / {limit:,} "
+                    f"({remaining:,} remaining)"
+                )
+            console.print()
+
+        # Footer with time until reset
+        reset_time = quota.get_time_until_reset()
+        console.print(f"[dim]Quota resets in {reset_time} (midnight PT)[/dim]")
+        console.print(
+            "[dim]Request increase: https://support.google.com/youtube/contact/yt_api_form[/dim]"
+        )
 
         return None
 
@@ -731,6 +819,152 @@ class YtrixCLI:
 
         return None
 
+    def gcp_init(
+        self,
+        project_id: str,
+        billing_account: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any] | None:
+        """Create a new GCP project from scratch with YouTube API enabled.
+
+        Creates a fresh GCP project (not cloning from an existing one), enables
+        the YouTube Data API v3, and optionally links a billing account.
+
+        Requires gcloud CLI installed and authenticated.
+
+        Args:
+            project_id: Unique project ID (e.g., 'my-ytrix-project')
+            billing_account: Optional billing account ID to link
+            dry_run: Show what would be done without making changes
+
+        Example:
+            ytrix gcp_init my-ytrix-project --dry-run
+            ytrix gcp_init my-ytrix-project
+            ytrix gcp_init my-ytrix-project --billing-account 012345-6789AB-CDEF01
+        """
+        from ytrix import gcptrix
+
+        if self._verbose:
+            gcptrix.set_verbose(True)
+
+        if self._json:
+            gcptrix.set_quiet(True)
+
+        # Check gcloud CLI
+        if not gcptrix.check_gcloud_installed():
+            msg = "gcloud CLI not found. Install from https://cloud.google.com/sdk/docs/install"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        # Check authentication
+        try:
+            auth_info = gcptrix.check_authentication()
+            if not self._json:
+                console.print(f"[blue]Authenticated as: {auth_info['account']}[/blue]")
+        except gcptrix.AuthenticationError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]{e}[/red]")
+            console.print("Run 'gcloud auth login' to authenticate")
+            return None
+
+        # Check if project already exists
+        if gcptrix.project_exists(project_id, dry_run):
+            msg = f"Project already exists: {project_id}"
+            if self._json:
+                return self._output({"success": False, "error": msg})
+            console.print(f"[red]{msg}[/red]")
+            return None
+
+        if not self._json:
+            console.print(f"[bold]Creating GCP project: {project_id}[/bold]")
+            if dry_run:
+                console.print("  [yellow]DRY RUN - no changes will be made[/yellow]")
+
+        # Create project
+        try:
+            gcptrix.create_project(project_id, parent=None, dry_run=dry_run)
+            if not dry_run and not self._json:
+                console.print(f"[green]Created project: {project_id}[/green]")
+        except gcptrix.GcloudError as e:
+            if self._json:
+                return self._output({"success": False, "error": str(e)})
+            console.print(f"[red]Failed to create project: {e}[/red]")
+            return None
+
+        # Link billing if provided
+        if billing_account:
+            try:
+                gcptrix.link_billing(project_id, billing_account, dry_run)
+                if not dry_run and not self._json:
+                    console.print(f"  Linked billing account: {billing_account}")
+            except gcptrix.GcloudError as e:
+                if not self._json:
+                    console.print(f"[yellow]Warning: Could not link billing: {e}[/yellow]")
+
+        # Enable YouTube API
+        try:
+            gcptrix.enable_service(project_id, "youtube.googleapis.com", dry_run)
+            if not dry_run and not self._json:
+                console.print("  [green]YouTube Data API v3 enabled[/green]")
+        except gcptrix.GcloudError as e:
+            if not self._json:
+                console.print(f"[yellow]Warning: Could not enable YouTube API: {e}[/yellow]")
+
+        if self._json:
+            return self._output(
+                {
+                    "success": True,
+                    "project_id": project_id,
+                    "dry_run": dry_run,
+                    "billing_linked": billing_account is not None,
+                }
+            )
+
+        if not dry_run:
+            console.print(f"\n[green]Project created: {project_id}[/green]")
+            console.print(
+                f"Console: https://console.cloud.google.com/home/dashboard?project={project_id}"
+            )
+
+        console.print("\n[yellow]Next steps:[/yellow]")
+        console.print(f"  Run: ytrix gcp_guide {project_id}")
+        console.print("  to see OAuth setup instructions")
+
+        return None
+
+    def gcp_guide(self, project_id: str) -> dict[str, Any] | None:
+        """Show OAuth setup guide for a GCP project.
+
+        Prints step-by-step instructions for configuring OAuth consent screen,
+        creating credentials, and adding the project to ytrix config.
+
+        Args:
+            project_id: GCP project ID to show guide for
+
+        Example:
+            ytrix gcp_guide my-ytrix-project
+            ytrix gcp_guide fontlabtv-c1
+        """
+        from ytrix import gcptrix
+
+        guide = gcptrix.get_oauth_guide(project_id)
+
+        if self._json:
+            return self._output(
+                {
+                    "project_id": project_id,
+                    "consent_url": f"https://console.cloud.google.com/apis/credentials/consent?project={project_id}",
+                    "credentials_url": f"https://console.cloud.google.com/apis/credentials?project={project_id}",
+                    "guide": guide,
+                }
+            )
+
+        print(guide)
+        return None
+
     def projects_add(self, name: str) -> dict[str, Any] | None:
         """Add a new GCP project to ytrix configuration.
 
@@ -801,6 +1035,64 @@ class YtrixCLI:
             console.print("\n[yellow]Cancelled[/yellow]")
             return None
 
+        # Prompt for quota_group (ToS compliance)
+        console.print()
+        console.print("[bold]Quota Group Configuration[/bold]")
+        console.print(
+            "[dim]Projects in the same quota_group can switch automatically "
+            "on quota exhaustion.[/dim]"
+        )
+        console.print(
+            "[dim]Use different groups for different purposes (e.g., personal, client-a).[/dim]"
+        )
+        console.print()
+
+        try:
+            quota_group = input("Quota group [default]: ").strip() or "default"
+            environment = input("Environment (dev/staging/prod) [prod]: ").strip() or "prod"
+            priority_str = input("Priority (lower = higher priority) [0]: ").strip() or "0"
+            try:
+                priority = int(priority_str)
+                if priority < 0:
+                    priority = 0
+            except ValueError:
+                priority = 0
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled[/yellow]")
+            return None
+
+        # Validate: warn if too many projects in same quota_group
+        projects_in_group = [
+            p for p in existing_projects if p.get("quota_group", "default") == quota_group
+        ]
+        if len(projects_in_group) >= 5:
+            console.print()
+            console.print(
+                f"[yellow]Warning: You already have {len(projects_in_group)} projects "
+                f"in quota_group '{quota_group}'.[/yellow]"
+            )
+            console.print(
+                "[yellow]Having many projects in the same group may violate Google's ToS "
+                "if used to circumvent quota limits.[/yellow]"
+            )
+            console.print(
+                "[dim]Consider using different quota_groups for truly different purposes.[/dim]"
+            )
+            console.print()
+            try:
+                confirm = input("Continue anyway? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    console.print("[yellow]Cancelled[/yellow]")
+                    return None
+            except (KeyboardInterrupt, EOFError):
+                console.print("\n[yellow]Cancelled[/yellow]")
+                return None
+
+        # Validate environment
+        if environment not in ("dev", "staging", "prod"):
+            console.print(f"[yellow]Invalid environment '{environment}', using 'prod'[/yellow]")
+            environment = "prod"
+
         # Read current config as text to preserve formatting
         config_text = config_file.read_text()
 
@@ -810,6 +1102,9 @@ class YtrixCLI:
 name = "{name}"
 client_id = "{client_id}"
 client_secret = "{client_secret}"
+quota_group = "{quota_group}"
+environment = "{environment}"
+priority = {priority}
 '''
 
         # Append to config
@@ -820,12 +1115,18 @@ client_secret = "{client_secret}"
                 {
                     "success": True,
                     "name": name,
+                    "quota_group": quota_group,
+                    "environment": environment,
+                    "priority": priority,
                     "message": f"Project '{name}' added. Run 'ytrix projects_auth {name}'.",
                 }
             )
 
         console.print(f"\n[green]Project '{name}' added to config[/green]")
-        console.print(f"Next step: ytrix projects_auth {name}")
+        console.print(f"  Quota group: {quota_group}")
+        console.print(f"  Environment: {environment}")
+        console.print(f"  Priority: {priority}")
+        console.print(f"\nNext step: ytrix projects_auth {name}")
 
         return None
 

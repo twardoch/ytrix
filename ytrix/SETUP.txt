@@ -93,12 +93,15 @@ Token expired?
 
 API quota exceeded?
   - YouTube API has daily limits; wait 24 hours
-  - Or set up multi-project rotation (see below)
+  - Or set up multi-project context switching (see below)
 
 MULTI-PROJECT SETUP (Advanced)
 ------------------------------
-For heavy batch operations, you can configure multiple GCP projects.
-ytrix will automatically rotate between them when quota is exhausted.
+For different use cases (dev, staging, prod), you can configure multiple
+GCP projects with quota_groups. ytrix can switch context between them.
+
+IMPORTANT: Using multiple projects to circumvent quota limits for a single
+purpose violates Google ToS. Use quota_groups for legitimate separation only.
 
 1. Create additional GCP projects (repeat Steps 1-4 above)
 2. Update your config.toml with [[projects]] array:

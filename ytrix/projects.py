@@ -1,9 +1,13 @@
-"""Multi-project credential management and rotation.
+"""Multi-project credential management with context switching.
 
 Manages multiple GCP projects for quota distribution. Automatically
-rotates to the next project when quota is exhausted.
+switches to the next available project when quota is exhausted.
 
 State is persisted to ~/.ytrix/quota_state.json for cross-session tracking.
+
+Note: Context switching is ToS-compliant when used for distinct purposes
+(e.g., dev vs prod) within quota_groups. Using multiple projects to
+circumvent quota limits for a single purpose violates Google ToS.
 """
 
 from __future__ import annotations
@@ -68,7 +72,10 @@ class ProjectState:
 
 @dataclass
 class ProjectManager:
-    """Manages multiple GCP projects with quota-aware rotation.
+    """Manages multiple GCP projects with quota-aware context switching.
+
+    Selects projects based on quota_group (for purpose-based separation)
+    and switches to another project within the same group when exhausted.
 
     Usage:
         config = load_config()
@@ -82,10 +89,10 @@ class ProjectManager:
         manager.record_quota(50)
 
         # Handle quota exceeded error
-        if manager.rotate_on_quota_exceeded():
+        if manager.handle_quota_exhausted():
             client = manager.get_client()  # New client for next project
         else:
-            # All projects exhausted
+            # All projects in group exhausted
             raise QuotaExceededError(...)
     """
 

@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Multi-project credential rotation** (Phase 9):
+- **Multi-project context switching** (Phase 9):
   - Support for `[[projects]]` array in config.toml for multiple GCP projects
   - Per-project OAuth token storage in ~/.ytrix/tokens/{project_name}.json
   - `projects` command to list configured projects and quota status

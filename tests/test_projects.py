@@ -132,25 +132,27 @@ class TestProjectManager:
             assert manager.current_state.is_exhausted
             assert manager.current_state.last_error == "daily quota exceeded"
 
-    def test_rotate_on_quota_exceeded(self, multi_project_config: Config, tmp_path: Path) -> None:
-        """Rotates to next project when quota exceeded."""
+    def test_context_switch_on_quota_exceeded(
+        self, multi_project_config: Config, tmp_path: Path
+    ) -> None:
+        """Switches to next project when quota exceeded."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
             assert manager.current_project.name == "main"
-            success = manager.rotate_on_quota_exceeded()
+            success = manager.handle_quota_exhausted()
             assert success is True
             assert manager.current_project.name == "backup"
 
-    def test_rotate_fails_when_all_exhausted(
+    def test_context_switch_fails_when_all_exhausted(
         self, multi_project_config: Config, tmp_path: Path
     ) -> None:
         """Returns False when all projects exhausted."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
             # Exhaust first
-            manager.rotate_on_quota_exceeded()
+            manager.handle_quota_exhausted()
             # Now second is current, exhaust it too
-            success = manager.rotate_on_quota_exceeded()
+            success = manager.handle_quota_exhausted()
             # Both exhausted, should fail
             assert success is False
 
@@ -534,3 +536,168 @@ class TestGetClient:
             result = manager.get_client()
             mock_build.assert_called_once_with("youtube", "v3", credentials=mock_creds)
             assert result is mock_client
+
+
+class TestQuotaGroupHandling:
+    """Tests for quota_group-based context switching (ToS compliance)."""
+
+    @pytest.fixture
+    def multi_group_config(self) -> Config:
+        """Create config with projects in multiple quota groups."""
+        return Config(
+            channel_id="UC123",
+            projects=[
+                ProjectConfig(
+                    name="personal-1",
+                    client_id="id1",
+                    client_secret="s1",
+                    quota_group="personal",
+                    priority=0,
+                ),
+                ProjectConfig(
+                    name="personal-2",
+                    client_id="id2",
+                    client_secret="s2",
+                    quota_group="personal",
+                    priority=1,
+                ),
+                ProjectConfig(
+                    name="client-a",
+                    client_id="id3",
+                    client_secret="s3",
+                    quota_group="client-a",
+                    priority=0,
+                ),
+            ],
+        )
+
+    def test_handle_quota_exhausted_switches_within_same_group(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """handle_quota_exhausted only switches within same quota_group."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+            manager.select_project("personal-1")
+            assert manager.current_project.name == "personal-1"
+
+            success = manager.handle_quota_exhausted()
+            assert success is True
+            # Should switch to personal-2 (same group), NOT client-a
+            assert manager.current_project.name == "personal-2"
+            assert manager.current_project.quota_group == "personal"
+
+    def test_handle_quota_exhausted_fails_when_all_in_group_exhausted(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """Returns False when all projects in quota_group are exhausted."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+            manager.select_project("personal-1")
+
+            # Exhaust first
+            manager.handle_quota_exhausted()
+            # Now personal-2 is current
+            assert manager.current_project.name == "personal-2"
+
+            # Exhaust second in group
+            success = manager.handle_quota_exhausted()
+            # Should fail - all personal projects exhausted
+            assert success is False
+
+    def test_handle_quota_exhausted_does_not_cross_groups(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """Does NOT failover to projects in different quota_group (ToS compliance)."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+            manager.select_project("client-a")
+
+            # client-a is alone in its group
+            success = manager.handle_quota_exhausted()
+            assert success is False
+            # Should NOT switch to personal group projects
+
+    def test_select_context_by_quota_group(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """select_context filters by quota_group."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+
+            project = manager.select_context(quota_group="client-a")
+            assert project.name == "client-a"
+            assert project.quota_group == "client-a"
+
+    def test_select_context_respects_priority(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """select_context selects by priority within group."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+
+            # personal-1 has priority=0, personal-2 has priority=1
+            project = manager.select_context(quota_group="personal")
+            assert project.name == "personal-1"  # Lower priority = selected first
+
+    def test_select_context_skips_exhausted(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """select_context skips exhausted projects."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+
+            # Exhaust personal-1
+            manager.select_project("personal-1")
+            manager.mark_exhausted()
+
+            # Now select_context should skip personal-1
+            project = manager.select_context(quota_group="personal")
+            assert project.name == "personal-2"
+
+    def test_select_context_force_project_overrides_filters(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """force_project in select_context overrides all filters."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+
+            # Force client-a even though we specify personal group
+            project = manager.select_context(quota_group="personal", force_project="client-a")
+            assert project.name == "client-a"
+
+    def test_select_context_raises_when_no_match(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """select_context raises when no projects match filters."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+
+            with pytest.raises(ValueError, match="No available projects"):
+                manager.select_context(quota_group="nonexistent")
+
+    def test_status_summary_includes_quota_group(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """status_summary includes quota_group, environment, priority."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+            summary = manager.status_summary()
+
+            # Check first project has new fields
+            personal1 = next(s for s in summary if s["name"] == "personal-1")
+            assert personal1["quota_group"] == "personal"
+            assert personal1["priority"] == 0
+            assert "environment" in personal1
+
+    def test_backwards_compat_deprecated_rotate_method(
+        self, multi_group_config: Config, tmp_path: Path
+    ) -> None:
+        """Deprecated rotate_on_quota_exceeded still works for backwards compat."""
+        with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
+            manager = ProjectManager(multi_group_config)
+            manager.select_project("personal-1")
+
+            # Old deprecated method should still work
+            success = manager.rotate_on_quota_exceeded()
+            assert success is True
+            assert manager.current_project.name == "personal-2"

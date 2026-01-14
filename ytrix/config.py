@@ -36,11 +36,25 @@ class OAuthConfig(BaseModel):  # type: ignore[misc]
 
 
 class ProjectConfig(BaseModel):  # type: ignore[misc]
-    """Configuration for a single GCP project."""
+    """Configuration for a single GCP project.
+
+    Attributes:
+        name: Unique project identifier (filesystem-safe).
+        client_id: OAuth2 client ID from GCP.
+        client_secret: OAuth2 client secret from GCP.
+        quota_group: Purpose-based grouping (e.g., "personal", "client-a").
+            Automatic context switching only occurs within the same group.
+            This prevents ToS-violating quota circumvention across unrelated projects.
+        environment: Deployment environment (dev/staging/prod).
+        priority: Selection order within quota_group (lower = higher priority).
+    """
 
     name: str
     client_id: str
     client_secret: str
+    quota_group: str = "default"
+    environment: str = "prod"
+    priority: int = 0
 
     @field_validator("name")  # type: ignore[untyped-decorator]
     @classmethod
@@ -48,6 +62,25 @@ class ProjectConfig(BaseModel):  # type: ignore[misc]
         """Ensure project name is filesystem-safe."""
         if not v or not v.replace("-", "").replace("_", "").isalnum():
             msg = "Project name must be alphanumeric with dashes/underscores"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("environment")  # type: ignore[untyped-decorator]
+    @classmethod
+    def validate_environment(cls, v: str) -> str:
+        """Validate environment is one of dev/staging/prod."""
+        valid = {"dev", "staging", "prod"}
+        if v not in valid:
+            msg = f"Environment must be one of: {', '.join(sorted(valid))}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("priority")  # type: ignore[untyped-decorator]
+    @classmethod
+    def validate_priority(cls, v: int) -> int:
+        """Ensure priority is non-negative."""
+        if v < 0:
+            msg = "Priority must be non-negative"
             raise ValueError(msg)
         return v
 
@@ -109,6 +142,36 @@ class Config(BaseModel):  # type: ignore[misc]
     def is_multi_project(self) -> bool:
         """Check if multi-project mode is enabled."""
         return bool(self.projects and len(self.projects) > 1)
+
+    def get_projects_by_quota_group(self, quota_group: str) -> list[ProjectConfig]:
+        """Get all projects in a quota group, sorted by priority.
+
+        Args:
+            quota_group: The quota group name to filter by.
+
+        Returns:
+            List of ProjectConfig objects in the group, sorted by priority.
+        """
+        if not self.projects:
+            if self.oauth:
+                # Legacy mode: return default project if group matches
+                default = ProjectConfig(
+                    name="default",
+                    client_id=self.oauth.client_id,
+                    client_secret=self.oauth.client_secret,
+                )
+                if quota_group == "default":
+                    return [default]
+            return []
+
+        matching = [p for p in self.projects if p.quota_group == quota_group]
+        return sorted(matching, key=lambda p: p.priority)
+
+    def get_quota_groups(self) -> list[str]:
+        """Get list of unique quota groups."""
+        if not self.projects:
+            return ["default"] if self.oauth else []
+        return sorted(set(p.quota_group for p in self.projects))
 
 
 def get_config_dir() -> Path:
