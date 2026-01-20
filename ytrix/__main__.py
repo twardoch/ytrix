@@ -10,6 +10,7 @@ from typing import Any
 import fire
 from rich.console import Console
 from rich.progress import Progress
+from rich.prompt import Prompt
 
 from ytrix import __version__, api, cache, dashboard, extractor, info, quota, yaml_ops
 from ytrix.api import BatchAction, BatchOperationHandler, classify_error, display_error
@@ -1081,7 +1082,7 @@ class YtrixCLI:
 
         # Prompt for credentials
         try:
-            client_id = input("Client ID: ").strip()
+            client_id = Prompt.ask("Client ID").strip()
             if not client_id:
                 msg = "Client ID is required"
                 if self._json:
@@ -1089,7 +1090,7 @@ class YtrixCLI:
                 console.print(f"[red]{msg}[/red]")
                 return None
 
-            client_secret = input("Client Secret: ").strip()
+            client_secret = Prompt.ask("Client Secret", password=True).strip()
             if not client_secret:
                 msg = "Client Secret is required"
                 if self._json:

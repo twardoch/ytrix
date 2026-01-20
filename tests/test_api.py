@@ -13,9 +13,12 @@ from ytrix.api import (
     ErrorCategory,
     PlaylistItem,
     Throttler,
+    _chunk_video_ids,
     _is_quota_exceeded,
     _is_retryable_error,
+    _parse_upload_date,
     add_video_to_playlist,
+    batch_video_metadata,
     classify_error,
     create_playlist,
     get_credentials,
@@ -117,6 +120,99 @@ class TestRemoveVideoFromPlaylist:
     def test_removes_video(self, mock_client: MagicMock) -> None:
         """Removes video by item ID."""
         remove_video_from_playlist(mock_client, "item123")
+
+
+class TestParseUploadDate:
+    """Tests for _parse_upload_date helper."""
+
+    def test_parse_upload_date_when_valid_iso_then_compact(self) -> None:
+        """Parses ISO date into YYYYMMDD format."""
+        result = _parse_upload_date("2024-02-03T12:34:56Z")
+        assert result == "20240203", "Expected YYYYMMDD from ISO date"
+
+    def test_parse_upload_date_when_invalid_then_none(self) -> None:
+        """Returns None for invalid or missing dates."""
+        assert _parse_upload_date("not-a-date") is None, "Invalid date should return None"
+        assert _parse_upload_date(None) is None, "None should return None"
+
+
+class TestChunkVideoIds:
+    """Tests for _chunk_video_ids helper."""
+
+    def test_chunk_video_ids_when_longer_than_size_then_splits(self) -> None:
+        """Splits list into multiple chunks of requested size."""
+        ids = [f"v{i}" for i in range(55)]
+        chunks = _chunk_video_ids(ids, chunk_size=50)
+        assert len(chunks) == 2, "Expected two chunks for 55 ids with size 50"
+        assert chunks[0] == ids[:50], "First chunk should contain first 50 ids"
+        assert chunks[1] == ids[50:], "Second chunk should contain remaining ids"
+
+
+class TestBatchVideoMetadata:
+    """Tests for batch_video_metadata function."""
+
+    def test_batch_video_metadata_when_empty_then_no_calls(self, mock_client: MagicMock) -> None:
+        """Returns empty list without API calls for empty input."""
+        result = batch_video_metadata(mock_client, [])
+        assert result == [], "Expected empty list for empty input"
+        mock_client.videos.assert_not_called()
+
+    def test_batch_video_metadata_when_out_of_order_then_matches_input(
+        self, mock_client: MagicMock
+    ) -> None:
+        """Preserves input order even if API returns different order."""
+        mock_client.videos().list().execute.return_value = {
+            "items": [
+                {
+                    "id": "a",
+                    "snippet": {
+                        "title": "Video A",
+                        "channelTitle": "Chan",
+                        "publishedAt": "2024-01-02T00:00:00Z",
+                    },
+                },
+                {
+                    "id": "b",
+                    "snippet": {
+                        "title": "Video B",
+                        "channelTitle": "Chan",
+                        "publishedAt": "2024-01-01T00:00:00Z",
+                    },
+                },
+            ]
+        }
+
+        result = batch_video_metadata(mock_client, ["b", "a"])
+
+        assert [video.id for video in result] == ["b", "a"], "Expected output order to match input"
+        assert result[1].upload_date == "20240102", "Expected parsed YYYYMMDD upload_date"
+
+    def test_batch_video_metadata_when_more_than_50_ids_then_chunks(
+        self, mock_client: MagicMock
+    ) -> None:
+        """Splits requests into 50-id chunks."""
+        ids = [f"v{i}" for i in range(60)]
+        first_items = [
+            {"id": vid, "snippet": {"title": vid, "channelTitle": ""}} for vid in ids[:50]
+        ]
+        second_items = [
+            {"id": vid, "snippet": {"title": vid, "channelTitle": ""}} for vid in ids[50:]
+        ]
+        mock_client.videos().list().execute.side_effect = [
+            {"items": first_items},
+            {"items": second_items},
+        ]
+
+        with patch("ytrix.api.record_quota") as record_quota:
+            result = batch_video_metadata(mock_client, ids)
+
+        assert len(result) == 60, "Expected metadata for all ids"
+        assert mock_client.videos().list.call_count == 2, "Expected two API calls for 60 ids"
+        first_call = mock_client.videos().list.call_args_list[0].kwargs
+        second_call = mock_client.videos().list.call_args_list[1].kwargs
+        assert first_call["id"] == ",".join(ids[:50]), "First call should include first 50 ids"
+        assert second_call["id"] == ",".join(ids[50:]), "Second call should include remaining ids"
+        assert record_quota.call_count == 2, "Expected quota recorded per batch"
 
         mock_client.playlistItems().delete.assert_called_with(id="item123")
 

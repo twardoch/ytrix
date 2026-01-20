@@ -30,6 +30,7 @@ class TestQuotaCosts:
         """List operations cost 1 unit."""
         assert QUOTA_COSTS["playlists.list"] == 1
         assert QUOTA_COSTS["playlistItems.list"] == 1
+        assert QUOTA_COSTS["videos.list"] == 1
 
     def test_daily_limit(self) -> None:
         """Daily limit is 10,000 units."""

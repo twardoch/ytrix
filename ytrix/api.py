@@ -195,6 +195,21 @@ _ERROR_COLORS: dict[ErrorCategory, str] = {
 }
 
 
+def _parse_upload_date(published_at: str | None) -> str | None:
+    """Convert ISO 8601 publishedAt to YYYYMMDD format."""
+    if not published_at:
+        return None
+    date_part = published_at.split("T", 1)[0]
+    if len(date_part) != 10 or date_part[4] != "-" or date_part[7] != "-":
+        return None
+    return date_part.replace("-", "")
+
+
+def _chunk_video_ids(video_ids: list[str], chunk_size: int = 50) -> list[list[str]]:
+    """Split video IDs into API-sized chunks."""
+    return [video_ids[i : i + chunk_size] for i in range(0, len(video_ids), chunk_size)]
+
+
 def display_error(error: APIError, show_action: bool = True) -> None:
     """Display an API error with a Rich panel.
 
@@ -610,6 +625,29 @@ def remove_video_from_playlist(client: Resource, playlist_item_id: str) -> None:
     _throttler.wait()
     client.playlistItems().delete(id=playlist_item_id).execute()
     record_quota("playlistItems.delete")
+
+
+def batch_video_metadata(client: Resource, video_ids: list[str]) -> list[Video]:
+    """Fetch video metadata in batches of 50 IDs."""
+    if not video_ids:
+        return []
+    videos: dict[str, Video] = {}
+    for chunk in _chunk_video_ids(video_ids):
+        response = client.videos().list(part="snippet", id=",".join(chunk)).execute()
+        record_quota("videos.list")
+        for item in response.get("items", []):
+            video_id = item.get("id")
+            if not video_id:
+                continue
+            snippet = item.get("snippet", {})
+            videos[video_id] = Video(
+                id=video_id,
+                title=snippet.get("title", ""),
+                channel=snippet.get("channelTitle", ""),
+                position=0,
+                upload_date=_parse_upload_date(snippet.get("publishedAt")),
+            )
+    return [videos[video_id] for video_id in video_ids if video_id in videos]
 
 
 def list_my_playlists(client: Resource, channel_id: str) -> list[Playlist]:

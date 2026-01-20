@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Phase 10: ToS-Compliant Architecture & UX Improvements**
+  - **Batch video metadata fetch** via `batch_video_metadata()` with 50-ID chunking
+  - **Credential prompts** now use Rich `Prompt.ask()` with masked client secret input
   - **yt-dlp rate limiting configuration** to avoid 429 errors:
     - `YtdlpRateLimitConfig` dataclass with configurable sleep intervals
     - Default: 5-10s between requests, 10s before subtitle downloads

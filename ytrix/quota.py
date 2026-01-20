@@ -19,6 +19,7 @@ QUOTA_COSTS = {
     "playlistItems.insert": 50,
     "playlistItems.update": 50,
     "playlistItems.delete": 50,
+    "videos.list": 1,
 }
 
 # Default daily quota limit

@@ -37,8 +37,8 @@ Note: API reads are required for own private/unlisted playlists (yt-dlp can't ac
 The hybrid approach is correct: yt-dlp for external reads, API for own playlist management.
 
 ### 10.3 Quota Optimization ([03-quota-optimization.md](issues/401/03-quota-optimization.md))
-- [ ] Add `batch_video_metadata(client, video_ids)` to api.py
-- [ ] Implement chunking logic for batches of 50 IDs
+- [x] Add `batch_video_metadata(client, video_ids)` to api.py
+- [x] Implement chunking logic for batches of 50 IDs
 - [ ] Add `etag` column to `playlists` table in cache.py
 - [ ] Add `etag` column to `videos` table in cache.py
 - [ ] Implement ETag conditional request logic in api.py
@@ -70,11 +70,11 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Implement `init_project()` to create new GCP project
 - [x] Add `gcp_init <project-name>` CLI command
 - [x] Enable YouTube Data API automatically during init
-- [ ] Add `Prompt.ask()` for client_id and client_secret entry
+- [x] Add `Prompt.ask()` for client_id and client_secret entry
 - [ ] Implement `_update_config_with_project()` to auto-append to config.toml
 - [ ] Add `--guide-oauth` flag to `gcp_clone` command
 - [ ] Add exponential backoff to IAM policy operations
-- [ ] Add `gcp_guide <project>` command to print setup instructions separately
+- [x] Add `gcp_guide <project>` command to print setup instructions separately
 
 ### 10.6 Enhanced Error Handling ([06-error-handling.md](issues/401/06-error-handling.md))
 - [x] Create `ErrorCategory` enum in api.py

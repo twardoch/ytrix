@@ -1613,6 +1613,34 @@ class TestProjectCommands:
         assert hasattr(YtrixCLI, "projects_add")
         assert callable(YtrixCLI.projects_add)
 
+    def test_projects_add_when_prompted_then_updates_config(self, tmp_path: Any) -> None:
+        """projects_add uses prompts and appends config entry."""
+        config_dir = tmp_path / ".ytrix"
+        config_dir.mkdir()
+        config_file = config_dir / "config.toml"
+        config_file.write_text('channel_id = "UC123"\n')
+        prompt_values = ["client-id", "client-secret"]
+
+        with (
+            patch("ytrix.__main__.configure_logging"),
+            patch("ytrix.__main__.api.set_throttle_delay"),
+            patch("ytrix.__main__.get_config_dir", return_value=config_dir),
+            patch("ytrix.__main__.Prompt.ask", side_effect=prompt_values) as prompt,
+            patch("builtins.input", side_effect=["default", "prod", "0"]),
+        ):
+            cli = YtrixCLI()
+            cli.projects_add("newproj")
+
+        updated = config_file.read_text()
+        assert 'name = "newproj"' in updated, "Expected new project entry in config"
+        assert prompt.call_args_list[0].args[0] == "Client ID", "Expected prompt for client ID"
+        assert prompt.call_args_list[1].args[0] == "Client Secret", (
+            "Expected prompt for client secret"
+        )
+        assert prompt.call_args_list[1].kwargs.get("password") is True, (
+            "Expected client secret prompt to mask input"
+        )
+
 
 class TestHelpCommand:
     """Tests for help command."""

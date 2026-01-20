@@ -310,7 +310,7 @@ Zero-quota reads via yt-dlp where possible, API for authenticated access. See [0
 
 Batching, ETags, maxResults. See [03-quota-optimization.md](issues/401/03-quota-optimization.md).
 
-- [ ] Add `batch_video_metadata()` to api.py (up to 50 IDs per request)
+- [x] Add `batch_video_metadata()` to api.py (up to 50 IDs per request)
 - [ ] Add ETag support to cache.py schema (new column)
 - [ ] Implement ETag conditional requests for playlist reads
 - [x] Audit all API calls for `maxResults=50`
