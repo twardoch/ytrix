@@ -387,12 +387,12 @@ Test coverage and docs. See [09-testing-documentation.md](issues/401/09-testing-
 - [x] Add `test_error_handling.py` with error classification tests
 - [x] Add `test_quota.py` with quota tracking tests
 - [x] Add `test_projects.py` with context selection tests (59 tests)
-- [ ] Add `test_journal.py` with enhanced journal tests
-- [ ] Add `test_dashboard.py` for CLI display tests
-- [ ] Update README with multi-project and quota sections
-- [ ] Create `docs/errors.md` with error catalog
-- [ ] Update CHANGELOG.md with Phase 10 changes
-- [ ] Ensure 80%+ coverage for new modules
+- [x] Add `test_journal.py` with enhanced journal tests (24 tests)
+- [x] Add `test_dashboard.py` for CLI display tests (25 tests)
+- [x] Update README with multi-project and quota sections
+- [x] Create `docs/errors.md` with error catalog
+- [x] Update CHANGELOG.md with Phase 10 changes
+- [x] Ensure 80%+ coverage for new modules (projects: 98%, quota: 99%, dashboard: 100%)
 
 ## Success Criteria
 

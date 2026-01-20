@@ -69,6 +69,7 @@ class YtdlpLogger:
     def error(self, msg: str) -> None:
         logger.error(self._format_msg(msg))
 
+
 # Load environment variables from .env file
 load_dotenv()
 

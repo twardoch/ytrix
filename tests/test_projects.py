@@ -861,16 +861,20 @@ class TestRateLimitHandling:
 
             assert manager._client is None
 
-    def test_handle_rate_limited_stays_in_same_quota_group(
-        self, tmp_path: Path
-    ) -> None:
+    def test_handle_rate_limited_stays_in_same_quota_group(self, tmp_path: Path) -> None:
         """handle_rate_limited only switches within same quota_group."""
         config = Config(
             channel_id="UC123",
             projects=[
-                ProjectConfig(name="group-a-1", client_id="id1", client_secret="s1", quota_group="a"),
-                ProjectConfig(name="group-b-1", client_id="id2", client_secret="s2", quota_group="b"),
-                ProjectConfig(name="group-a-2", client_id="id3", client_secret="s3", quota_group="a"),
+                ProjectConfig(
+                    name="group-a-1", client_id="id1", client_secret="s1", quota_group="a"
+                ),
+                ProjectConfig(
+                    name="group-b-1", client_id="id2", client_secret="s2", quota_group="b"
+                ),
+                ProjectConfig(
+                    name="group-a-2", client_id="id3", client_secret="s3", quota_group="a"
+                ),
             ],
         )
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
@@ -920,9 +924,7 @@ class TestRateLimitHandling:
             manager.on_success()
             assert manager.current_state.rate_limit_hits == 0
 
-    def test_rotate_project_round_robin(
-        self, multi_project_config: Config, tmp_path: Path
-    ) -> None:
+    def test_rotate_project_round_robin(self, multi_project_config: Config, tmp_path: Path) -> None:
         """rotate_project does round-robin rotation."""
         with patch("ytrix.projects.get_config_dir", return_value=tmp_path):
             manager = ProjectManager(multi_project_config)
@@ -953,9 +955,7 @@ class TestRateLimitHandling:
             assert result is True
             assert manager.current_project.name == "proj-3"
 
-    def test_rotate_project_returns_false_with_single_project(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rotate_project_returns_false_with_single_project(self, tmp_path: Path) -> None:
         """rotate_project returns False when only one project."""
         config = Config(
             channel_id="UC123",
@@ -994,8 +994,6 @@ class TestRateLimitHandling:
     ) -> None:
         """Rate limit cooldown expires after timeout."""
         import time
-
-        from ytrix.projects import RATE_LIMIT_COOLDOWN_SECONDS
 
         with (
             patch("ytrix.projects.get_config_dir", return_value=tmp_path),

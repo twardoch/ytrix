@@ -78,7 +78,8 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 # Rate limit cooldown duration in seconds (how long to avoid a rate-limited project)
 RATE_LIMIT_COOLDOWN_SECONDS = 60.0
 # Number of consecutive rate limits before marking project for cooldown
-RATE_LIMIT_THRESHOLD = 3
+# Set to 1 for immediate project rotation on rate limit
+RATE_LIMIT_THRESHOLD = 1
 
 
 @dataclass
@@ -666,6 +667,49 @@ class ProjectManager:
         # Sort by quota_group, then priority
         result.sort(key=lambda x: (str(x.get("quota_group", "")), int(x.get("priority", 0))))
         return result
+
+    def total_available_quota(self, quota_group: str | None = None) -> dict[str, Any]:
+        """Get total available quota across all projects in a quota group.
+
+        Args:
+            quota_group: Quota group to check. Defaults to current project's group.
+
+        Returns:
+            Dict with: total_remaining, total_limit, num_projects, per_project details
+        """
+        self._check_quota_reset()
+
+        if quota_group is None:
+            quota_group = self.current_project.quota_group
+
+        projects_in_group = self.config.get_projects_by_quota_group(quota_group)
+        total_remaining = 0
+        total_used = 0
+        project_details: list[dict[str, str | int]] = []
+
+        for project in projects_in_group:
+            state = self._states.get(project.name, ProjectState(name=project.name))
+            remaining = max(0, DAILY_QUOTA_LIMIT - state.quota_used)
+            if not state.is_exhausted:
+                total_remaining += remaining
+            total_used += state.quota_used
+            project_details.append(
+                {
+                    "name": project.name,
+                    "used": state.quota_used,
+                    "remaining": remaining,
+                    "exhausted": 1 if state.is_exhausted else 0,
+                }
+            )
+
+        return {
+            "quota_group": quota_group,
+            "num_projects": len(projects_in_group),
+            "total_limit": DAILY_QUOTA_LIMIT * len(projects_in_group),
+            "total_used": total_used,
+            "total_remaining": total_remaining,
+            "projects": project_details,
+        }
 
 
 # Global manager instance

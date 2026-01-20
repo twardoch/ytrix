@@ -1954,13 +1954,49 @@ priority = {priority}
             playlist_updates=len([t for t in pending_tasks if t.match_type == "partial"]),
         )
 
-        # Pre-flight quota check
-        can_afford, quota_msg = can_afford_operation(estimate)
+        # Pre-flight quota check - show quota across ALL projects
+        manager = get_project_manager(config)
+        quota_info = manager.total_available_quota()
+
         if not self._json:
             console.print()
             console.print(format_quota_warning(estimate))
-            if not can_afford:
-                console.print(f"[yellow]Warning: {quota_msg}[/yellow]")
+
+            # Show multi-project quota summary
+            if config.is_multi_project:
+                console.print(
+                    f"\n[blue]Available quota across {quota_info['num_projects']} projects "
+                    f"(group: {quota_info['quota_group']}):[/blue]"
+                )
+                for proj in quota_info.get("projects", []):
+                    status = "[red]EXHAUSTED[/red]" if proj.get("exhausted") else ""
+                    console.print(
+                        f"  {proj['name']}: {proj['used']:,} used, "
+                        f"{proj['remaining']:,} remaining {status}"
+                    )
+                console.print(
+                    f"  [bold]Total: {quota_info['total_remaining']:,} / "
+                    f"{quota_info['total_limit']:,} available[/bold]"
+                )
+
+                # Check if we can afford with ALL projects combined
+                if estimate.total <= quota_info["total_remaining"]:
+                    console.print(
+                        f"\n[green]✓ Operation needs {estimate.total:,} units, "
+                        f"{quota_info['total_remaining']:,} available across all projects[/green]"
+                    )
+                else:
+                    shortage = estimate.total - quota_info["total_remaining"]
+                    console.print(
+                        f"\n[red]✗ Operation needs {estimate.total:,} units but only "
+                        f"{quota_info['total_remaining']:,} available across all projects. "
+                        f"Shortage: {shortage:,} units.[/red]"
+                    )
+            else:
+                # Single project mode
+                can_afford, quota_msg = can_afford_operation(estimate)
+                if not can_afford:
+                    console.print(f"[yellow]Warning: {quota_msg}[/yellow]")
             console.print()
 
         if dry_run:
@@ -1999,38 +2035,40 @@ priority = {priority}
                         console.print(f"[blue]Updating: {source_playlist.title}[/blue]")
                     target_id = task.match_playlist_id
                     existing_ids = extractor.get_playlist_video_ids(target_id)
+                    num_projects = len(config.get_project_names()) if config.is_multi_project else 1
                     added = 0
                     for video in source_playlist.videos:
                         if video.id not in existing_ids:
-                            try:
-                                api.add_video_to_playlist(client, target_id, video.id)
-                                added += 1
-                                if self._manager:
-                                    self._manager.on_success()  # Reset rate limit counters
-                            except Exception as e:
-                                video_error = classify_error(e)
-                                if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
-                                    raise  # Stop batch on quota exhaustion
-                                # Try project rotation on rate limits
-                                if (
-                                    video_error.category == api.ErrorCategory.RATE_LIMITED
-                                    and self._manager is not None
-                                    and config.is_multi_project
-                                    and self._manager.handle_rate_limited()
-                                ):
-                                    client = self._manager.get_client()
-                                    if not self._json:
-                                        console.print(
-                                            "[yellow]Switched project (rate limit)[/yellow]"
-                                        )
-                                    # Retry adding this video with new client
-                                    try:
-                                        api.add_video_to_playlist(client, target_id, video.id)
-                                        added += 1
-                                    except Exception:
-                                        logger.warning("Retry failed for {}", video.id)
-                                else:
+                            # Try adding with project rotation (no decorator retries)
+                            for _ in range(num_projects):
+                                try:
+                                    api.add_video_to_playlist_raw(client, target_id, video.id)
+                                    added += 1
+                                    if self._manager:
+                                        self._manager.on_success()
+                                    break
+                                except Exception as e:
+                                    video_error = classify_error(e)
+                                    if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
+                                        raise  # Stop batch on quota exhaustion
+                                    # Rate limited - switch project immediately
+                                    if (
+                                        video_error.category == api.ErrorCategory.RATE_LIMITED
+                                        and self._manager is not None
+                                        and config.is_multi_project
+                                        and self._manager.handle_rate_limited()
+                                    ):
+                                        client = self._manager.get_client()
+                                        if not self._json:
+                                            console.print(
+                                                f"[yellow]Switched to "
+                                                f"'{self._manager.current_project.name}' "
+                                                f"(rate limit)[/yellow]"
+                                            )
+                                        continue  # Retry with new project
+                                    # Non-retryable error
                                     logger.warning("Failed to add {}: {}", video.id, e)
+                                    break
                     update_task(
                         journal,
                         task.source_playlist_id,
@@ -2047,12 +2085,46 @@ priority = {priority}
                             f"(+{added} videos)[/green]"
                         )
                 else:
-                    # Create new playlist
+                    # Create new playlist with project rotation on rate limit
                     if not self._json:
                         console.print(f"[blue]Creating: {source_playlist.title}[/blue]")
-                    new_id = api.create_playlist(
-                        client, source_playlist.title, source_playlist.description
-                    )
+
+                    # Try create_playlist with project rotation (no decorator retries)
+                    new_id = None
+                    num_projects = len(config.get_project_names()) if config.is_multi_project else 1
+                    for _ in range(num_projects):
+                        try:
+                            new_id = api.create_playlist_raw(
+                                client, source_playlist.title, source_playlist.description
+                            )
+                            if self._manager:
+                                self._manager.on_success()
+                            break  # Success
+                        except Exception as create_error:
+                            create_err = classify_error(create_error)
+                            # Quota exhausted - let outer handler deal with it
+                            if create_err.category == api.ErrorCategory.QUOTA_EXCEEDED:
+                                raise
+                            # Rate limited - switch project immediately
+                            if (
+                                create_err.category == api.ErrorCategory.RATE_LIMITED
+                                and self._manager is not None
+                                and config.is_multi_project
+                                and self._manager.handle_rate_limited()
+                            ):
+                                client = self._manager.get_client()
+                                project_name = self._manager.current_project.name
+                                if not self._json:
+                                    console.print(
+                                        f"[yellow]Switched to '{project_name}' "
+                                        f"(rate limit on create_playlist)[/yellow]"
+                                    )
+                                continue  # Retry with new project
+                            # No more projects or non-retryable error
+                            raise
+
+                    if new_id is None:
+                        raise RuntimeError("Failed to create playlist after project rotation")
 
                     added = 0
                     with Progress(console=console, disable=(self._json or self._quiet)) as progress:
@@ -2060,35 +2132,36 @@ priority = {priority}
                             "Adding videos...", total=len(source_playlist.videos)
                         )
                         for video in source_playlist.videos:
-                            try:
-                                api.add_video_to_playlist(client, new_id, video.id)
-                                added += 1
-                                if self._manager:
-                                    self._manager.on_success()  # Reset rate limit counters
-                            except Exception as e:
-                                video_error = classify_error(e)
-                                if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
-                                    raise  # Stop batch on quota exhaustion
-                                # Try project rotation on rate limits during video adds
-                                if (
-                                    video_error.category == api.ErrorCategory.RATE_LIMITED
-                                    and self._manager is not None
-                                    and config.is_multi_project
-                                    and self._manager.handle_rate_limited()
-                                ):
-                                    client = self._manager.get_client()
-                                    if not self._json:
-                                        console.print(
-                                            "[yellow]Switched project (rate limit)[/yellow]"
-                                        )
-                                    # Retry adding this video with new client
-                                    try:
-                                        api.add_video_to_playlist(client, new_id, video.id)
-                                        added += 1
-                                    except Exception:
-                                        logger.warning("Retry failed for {}", video.id)
-                                else:
+                            # Try adding with project rotation (no decorator retries)
+                            for _ in range(num_projects):
+                                try:
+                                    api.add_video_to_playlist_raw(client, new_id, video.id)
+                                    added += 1
+                                    if self._manager:
+                                        self._manager.on_success()
+                                    break
+                                except Exception as e:
+                                    video_error = classify_error(e)
+                                    if video_error.category == api.ErrorCategory.QUOTA_EXCEEDED:
+                                        raise  # Stop batch on quota exhaustion
+                                    # Rate limited - switch project immediately
+                                    if (
+                                        video_error.category == api.ErrorCategory.RATE_LIMITED
+                                        and self._manager is not None
+                                        and config.is_multi_project
+                                        and self._manager.handle_rate_limited()
+                                    ):
+                                        client = self._manager.get_client()
+                                        if not self._json:
+                                            console.print(
+                                                f"[yellow]Switched to "
+                                                f"'{self._manager.current_project.name}' "
+                                                f"(rate limit)[/yellow]"
+                                            )
+                                        continue  # Retry with new project
+                                    # Non-retryable error
                                     logger.warning("Failed to add {}: {}", video.id, e)
+                                    break
                             progress.advance(prog_task)
 
                     update_task(

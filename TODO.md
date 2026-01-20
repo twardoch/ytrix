@@ -153,7 +153,7 @@ The hybrid approach is correct: yt-dlp for external reads, API for own playlist 
 - [x] Add `test_select_by_quota_group` (test_select_context_by_quota_group)
 - [x] Add `test_failover_within_same_group` (test_handle_quota_exhausted_switches_within_same_group)
 - [x] Add `test_no_cross_group_failover` (test_handle_quota_exhausted_does_not_cross_groups)
-- [ ] Create `tests/test_journal.py` for enhanced journal
+- [x] Create `tests/test_journal.py` for enhanced journal (24 tests)
 - [x] Create `tests/test_dashboard.py` for Rich display (25 tests, 100% coverage)
 - [x] Mark integration tests with `@pytest.mark.integration` (already configured in pyproject.toml)
 - [x] Update README.md with multi-project setup section

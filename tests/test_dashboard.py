@@ -8,7 +8,6 @@ from io import StringIO
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-import pytest
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table

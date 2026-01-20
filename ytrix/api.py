@@ -233,13 +233,18 @@ def _log_retry_attempt(retry_state: RetryCallState) -> None:
     attempt = retry_state.attempt_number
     next_wait = retry_state.next_action.sleep if retry_state.next_action else 0
 
+    # Get the function name being retried
+    fn_name = getattr(retry_state.fn, "__name__", "unknown")
+
     api_error = classify_error(exc)
     color = _ERROR_COLORS.get(api_error.category, "yellow")
 
     # Format wait time nicely
     wait_str = f"{next_wait / 60:.1f}m" if next_wait >= 60 else f"{next_wait:.0f}s"
 
-    msg = f"[{color}]Retry {attempt}[/{color}]: {api_error.message} → waiting {wait_str}"
+    msg = (
+        f"[{color}]Retry {attempt} ({fn_name})[/{color}]: {api_error.message} → waiting {wait_str}"
+    )
     console.print(msg)
 
 
@@ -525,11 +530,10 @@ def get_youtube_client(config: Config) -> Resource:
     return build("youtube", "v3", credentials=creds)
 
 
-@api_retry  # type: ignore[untyped-decorator]
-def create_playlist(
+def create_playlist_raw(
     client: Resource, title: str, description: str = "", privacy: str = "public"
 ) -> str:
-    """Create a new playlist and return its ID. (50 quota units)"""
+    """Create playlist without retry decorator. Use for manual retry with project rotation."""
     _throttler.wait()
     body = {
         "snippet": {"title": title, "description": description},
@@ -539,6 +543,14 @@ def create_playlist(
     record_quota("playlists.insert")
     playlist_id: str = response["id"]
     return playlist_id
+
+
+@api_retry  # type: ignore[untyped-decorator]
+def create_playlist(
+    client: Resource, title: str, description: str = "", privacy: str = "public"
+) -> str:
+    """Create a new playlist and return its ID. (50 quota units)"""
+    return create_playlist_raw(client, title, description, privacy)
 
 
 @api_retry  # type: ignore[untyped-decorator]
@@ -571,9 +583,8 @@ def update_playlist(
     record_quota("playlists.update")  # update call
 
 
-@api_retry  # type: ignore[untyped-decorator]
-def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
-    """Add video to playlist and return playlistItem ID. (50 quota units)"""
+def add_video_to_playlist_raw(client: Resource, playlist_id: str, video_id: str) -> str:
+    """Add video without retry decorator. Use for manual retry with project rotation."""
     _throttler.wait()
     body = {
         "snippet": {
@@ -585,6 +596,12 @@ def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> 
     record_quota("playlistItems.insert")
     item_id: str = response["id"]
     return item_id
+
+
+@api_retry  # type: ignore[untyped-decorator]
+def add_video_to_playlist(client: Resource, playlist_id: str, video_id: str) -> str:
+    """Add video to playlist and return playlistItem ID. (50 quota units)"""
+    return add_video_to_playlist_raw(client, playlist_id, video_id)
 
 
 @api_retry  # type: ignore[untyped-decorator]
