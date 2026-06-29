@@ -1,4 +1,7 @@
-"""Logging configuration for ytrix."""
+"""Logging configuration for ytrix.
+
+Sets up standard console output with optional verbose debugging.
+"""
 
 import sys
 

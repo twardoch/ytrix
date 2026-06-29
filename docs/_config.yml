@@ -1,0 +1,21 @@
+title: ytrix
+description: YouTube playlist management CLI — copy, split, and edit playlists via YAML
+baseurl: "/ytrix"
+url: "https://twardoch.github.io"
+
+remote_theme: just-the-docs/just-the-docs
+
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+nav_external_links:
+  - title: GitHub
+    url: https://github.com/twardoch/ytrix
+  - title: PyPI
+    url: https://pypi.org/project/ytrix/
+
+footer_content: "MIT License. Copyright &copy; 2024–2026 Adam Twardoch."
+
+plugins:
+  - jekyll-seo-tag

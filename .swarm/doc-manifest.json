@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "scanned_at": "2026-04-07T22:33:22.612Z",
+  "files": [
+    {
+      "path": ".venv/lib/python3.13/site-packages/fire/console/README.md",
+      "title": "README.md",
+      "summary": "This is the console package from googlecloudsdk, as used by Python Fire. Python Fire does not accept pull requests modifying the console package; rather, changes to console should go through the up...",
+      "lines": 4,
+      "mtime": 1768248150125
+    },
+    {
+      "path": "AGENTS.md",
+      "title": "Repository & Development Guide",
+      "summary": "**ytrix** - A Python package & CLI tool for YouTube playlist management. Enables copying playlists between channels, splitting playlists by criteria (channel/year), and bidirectional YAML-based pla...",
+      "lines": 493,
+      "mtime": 1768252938427
+    },
+    {
+      "path": "CHANGELOG.md",
+      "title": "Changelog",
+      "summary": "All notable changes to this project will be documented in this file. - **Phase 10: ToS-Compliant Architecture & UX Improvements** - **Batch video metadata fetch** via `batch_video_metadata()` with ...",
+      "lines": 278,
+      "mtime": 1769171072271
+    },
+    {
+      "path": "CLAUDE.md",
+      "title": "CLAUDE.md",
+      "summary": "This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. **ytrix** - YouTube playlist management CLI. Copy playlists between channels, split by criteri...",
+      "lines": 123,
+      "mtime": 1768397875092
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "title": "Contributing to ytrix",
+      "summary": "```bash git clone https://github.com/twardoch/ytrix.git cd ytrix uv venv && source .venv/bin/activate uv pip install -e \".[dev]\" ``` ```bash ./test.sh uvx pytest -xvs uvx pytest --cov=ytrix --cov-r...",
+      "lines": 46,
+      "mtime": 1768330857550
+    },
+    {
+      "path": "docs/errors.md",
+      "title": "ytrix Error Reference",
+      "summary": "This document catalogs all error types ytrix handles and how to resolve them. **What it means**: YouTube is limiting request frequency. **What ytrix does**: - Automatic retry with exponential backo...",
+      "lines": 148,
+      "mtime": 1768392762895
+    },
+    {
+      "path": "external/yt-dlp/CONTRIBUTING.md",
+      "title": "CONTRIBUTING TO YT-DLP",
+      "summary": "- [OPENING AN ISSUE](#opening-an-issue) - [Is the description of the issue itself sufficient?](#is-the-description-of-the-issue-itself-sufficient) - [Are you using the latest version?](#are-you-usi...",
+      "lines": 790,
+      "mtime": 1768247992583
+    },
+    {
+      "path": "external/yt-dlp/README.md",
+      "title": "README.md",
+      "summary": "<!-- MANPAGE: BEGIN EXCLUDED SECTION --> <div align=\"center\"> [![YT-DLP](https://raw.githubusercontent.com/yt-dlp/yt-dlp/master/.github/banner.svg)](#readme) [![Release version](https://img.shields...",
+      "lines": 2486,
+      "mtime": 1768247992585
+    },
+    {
+      "path": "external/yt-dlp/yt_dlp/extractor/youtube/jsc/README.md",
+      "title": "YoutubeIE JS Challenge Provider Framework",
+      "summary": "As part of the YouTube extractor, we have a framework for solving n/sig JS Challenges programmatically. This can be used by plugins. > [!TIP] > If publishing a JS Challenge Provider plugin to GitHu...",
+      "lines": 133,
+      "mtime": 1768247992668
+    },
+    {
+      "path": "external/yt-dlp/yt_dlp/extractor/youtube/pot/README.md",
+      "title": "YoutubeIE PO Token Provider Framework",
+      "summary": "As part of the YouTube extractor, we have a framework for providing PO Tokens programmatically. This can be used by plugins. Refer to the [PO Token Guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-T...",
+      "lines": 309,
+      "mtime": 1768247992669
+    },
+    {
+      "path": "README.md",
+      "title": "ytrix",
+      "summary": "YouTube playlist management CLI. Copy playlists between channels, split by criteria, edit via YAML. ```bash uv pip install -e . ``` Run `ytrix config` to see config status and a detailed setup guid...",
+      "lines": 241,
+      "mtime": 1768391940715
+    }
+  ]
+}

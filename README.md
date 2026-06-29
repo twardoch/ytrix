@@ -1,5 +1,8 @@
 # ytrix
+
 YouTube playlist management CLI. Copy playlists between channels, split by criteria, edit via YAML.
+
+**Docs**: https://twardoch.github.io/ytrix/ | **PyPI**: https://pypi.org/project/ytrix/
 
 ## Installation
 ```bash

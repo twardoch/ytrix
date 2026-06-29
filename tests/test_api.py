@@ -198,7 +198,8 @@ class TestBatchVideoMetadata:
         second_items = [
             {"id": vid, "snippet": {"title": vid, "channelTitle": ""}} for vid in ids[50:]
         ]
-        mock_client.videos().list().execute.side_effect = [
+        # Use return_value chain to avoid counting setup calls against call_count
+        mock_client.videos.return_value.list.return_value.execute.side_effect = [
             {"items": first_items},
             {"items": second_items},
         ]
@@ -207,14 +208,13 @@ class TestBatchVideoMetadata:
             result = batch_video_metadata(mock_client, ids)
 
         assert len(result) == 60, "Expected metadata for all ids"
-        assert mock_client.videos().list.call_count == 2, "Expected two API calls for 60 ids"
-        first_call = mock_client.videos().list.call_args_list[0].kwargs
-        second_call = mock_client.videos().list.call_args_list[1].kwargs
+        list_mock = mock_client.videos.return_value.list
+        assert list_mock.call_count == 2, "Expected two API calls for 60 ids"
+        first_call = list_mock.call_args_list[0].kwargs
+        second_call = list_mock.call_args_list[1].kwargs
         assert first_call["id"] == ",".join(ids[:50]), "First call should include first 50 ids"
         assert second_call["id"] == ",".join(ids[50:]), "Second call should include remaining ids"
         assert record_quota.call_count == 2, "Expected quota recorded per batch"
-
-        mock_client.playlistItems().delete.assert_called_with(id="item123")
 
 
 class TestListMyPlaylists:

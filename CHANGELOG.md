@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **CI workflow** (`.github/workflows/ci.yml`): lint, format check, mypy, and pytest on Python 3.12 and 3.13; Jekyll docs deployment to GitHub Pages
+- **Jekyll docs site** (`docs/`): setup guide (OAuth2 walkthrough), `config.toml` schema reference, multi-project quota management guide, full command reference
+- **Test fix**: `test_batch_video_metadata_when_more_than_50_ids_then_chunks` corrected to use `return_value` chain for mock setup, avoiding spurious call-count increments
+
+---
+
 - **Phase 10: ToS-Compliant Architecture & UX Improvements**
   - **Batch video metadata fetch** via `batch_video_metadata()` with 50-ID chunking
   - **Credential prompts** now use Rich `Prompt.ask()` with masked client secret input
@@ -172,7 +178,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Updated PLAN.md success criteria with actual metrics (112 tests, 86% coverage)
+- Updated TASKS.md success criteria with actual metrics (112 tests, 86% coverage)
 
 ## [0.1.8] - 2025-01-12
 
@@ -189,7 +195,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Updated PLAN.md and TODO.md to reflect all 9 commands and --json-output
+- Updated TASKS.md and TODO.md to reflect all 9 commands and --json-output
 
 ## [0.1.6] - 2025-01-12
 

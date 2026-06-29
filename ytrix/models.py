@@ -1,4 +1,8 @@
-"""Data models for ytrix."""
+"""Data models for ytrix.
+
+These models structure the metadata we pull from YouTube. They map directly 
+to the YAML schema we use for configuration and caching.
+"""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -6,7 +10,11 @@ from typing import Any
 
 @dataclass
 class Video:
-    """Video metadata."""
+    """A YouTube video and its metadata.
+    
+    Holds the core data for a single video. We use this to track what videos 
+    belong where, and to quickly look up details like the channel or upload date.
+    """
 
     id: str
     title: str
@@ -15,7 +23,10 @@ class Video:
     upload_date: str | None = None  # YYYYMMDD format for year extraction
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize for YAML."""
+        """Convert to a dictionary for YAML serialization.
+        
+        Strips out empty optional fields (like upload_date) to keep the YAML clean.
+        """
         d = {"id": self.id, "title": self.title, "channel": self.channel, "position": self.position}
         if self.upload_date:
             d["upload_date"] = self.upload_date
@@ -23,7 +34,10 @@ class Video:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], position: int = 0) -> "Video":
-        """Deserialize from YAML."""
+        """Reconstruct a Video from a YAML dictionary.
+        
+        Fills missing fields with empty strings to prevent NoneType crashes later.
+        """
         return cls(
             id=data["id"],
             title=data.get("title", ""),
@@ -35,7 +49,11 @@ class Video:
 
 @dataclass
 class Playlist:
-    """Playlist metadata."""
+    """A YouTube playlist containing metadata and its associated videos.
+    
+    Represents both source playlists we pull from, and destination playlists 
+    we write to. It holds a list of Video models.
+    """
 
     id: str
     title: str
@@ -44,7 +62,11 @@ class Playlist:
     videos: list[Video] = field(default_factory=list)
 
     def to_dict(self, include_videos: bool = True) -> dict[str, Any]:
-        """Serialize for YAML."""
+        """Convert to a dictionary for YAML serialization.
+        
+        Set include_videos=False to get just the playlist metadata without 
+        dumping the entire video list.
+        """
         d: dict[str, Any] = {
             "id": self.id,
             "title": self.title,
@@ -57,7 +79,10 @@ class Playlist:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Playlist":
-        """Deserialize from YAML."""
+        """Reconstruct a Video from a YAML dictionary.
+        
+        Fills missing fields with empty strings to prevent NoneType crashes later.
+        """
         videos = []
         if "videos" in data:
             videos = [Video.from_dict(v, i) for i, v in enumerate(data["videos"])]
@@ -71,22 +96,25 @@ class Playlist:
 
 
 class InvalidPlaylistError(ValueError):
-    """Raised when playlist URL/ID is invalid."""
+    """Raised when we can't extract a valid playlist ID from a URL or string."""
 
     pass
 
 
 def extract_playlist_id(url_or_id: str) -> str:
-    """Extract and validate playlist ID from URL or ID.
+    """Extract a raw YouTube playlist ID from a URL or string.
+
+    Parses full URLs (e.g., youtube.com/playlist?list=PL123) and returns just the ID.
+    If given just an ID, it validates the characters and length.
 
     Args:
-        url_or_id: YouTube playlist URL or playlist ID
+        url_or_id: The URL or ID string to parse.
 
     Returns:
-        Valid playlist ID
+        A valid YouTube playlist ID.
 
     Raises:
-        InvalidPlaylistError: If input is not a valid playlist URL/ID
+        InvalidPlaylistError: If the input is empty, lacks an ID, or contains invalid characters.
     """
     url_or_id = url_or_id.strip()
     if not url_or_id:

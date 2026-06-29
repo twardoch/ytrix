@@ -1,4 +1,8 @@
-"""Journal for tracking batch operations across sessions."""
+"""Journal for tracking batch operations across sessions.
+
+Keeps a record of what we're doing, so if a run fails or hits a quota limit,
+we can pick up exactly where we left off without redoing work.
+"""
 
 import json
 from dataclasses import dataclass, field
@@ -12,7 +16,10 @@ from ytrix.logging import logger
 
 
 class TaskStatus(str, Enum):
-    """Status of a batch task."""
+    """The current state of a batch task.
+
+Tracks whether a sync operation is waiting, running, done, or broken.
+"""
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -23,7 +30,11 @@ class TaskStatus(str, Enum):
 
 @dataclass
 class Task:
-    """A single batch operation task."""
+    """A single sync operation tracking one source playlist to one target.
+
+Records exactly what happened: how many videos were added, what broke if 
+it failed, and what to try next.
+"""
 
     source_playlist_id: str
     source_title: str
@@ -38,7 +49,7 @@ class Task:
     match_playlist_id: str | None = None  # ID of matching target playlist
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict."""
+        """Convert the task into a dictionary for JSON storage."""
         return {
             "source_playlist_id": self.source_playlist_id,
             "source_title": self.source_title,
@@ -55,7 +66,7 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
-        """Deserialize from dict."""
+        """Rebuild a Task object from a JSON dictionary."""
         return cls(
             source_playlist_id=data["source_playlist_id"],
             source_title=data["source_title"],
@@ -80,7 +91,7 @@ class Journal:
     tasks: list[Task] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to dict."""
+        """Convert the task into a dictionary for JSON storage."""
         return {
             "batch_id": self.batch_id,
             "created_at": self.created_at,
@@ -89,7 +100,7 @@ class Journal:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Journal":
-        """Deserialize from dict."""
+        """Rebuild a Task object from a JSON dictionary."""
         return cls(
             batch_id=data["batch_id"],
             created_at=data["created_at"],
